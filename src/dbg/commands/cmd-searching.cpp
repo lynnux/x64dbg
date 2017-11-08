@@ -8,6 +8,9 @@
 #include "filehelper.h"
 #include "label.h"
 #include "yara/yara.h"
+#include "stringformat.h"
+#include "disasm_helper.h"
+#include "symbolinfo.h"
 
 static int maxFindResults = 5000;
 
@@ -26,7 +29,7 @@ bool cbInstrFind(int argc, char* argv[])
         strcpy_s(pattern, argv[2] + 1);
     else
         strcpy_s(pattern, argv[2]);
-    int len = (int)strlen(pattern);
+    size_t len = strlen(pattern);
     if(pattern[len - 1] == '#')
         pattern[len - 1] = '\0';
 
@@ -78,7 +81,7 @@ bool cbInstrFindAll(int argc, char* argv[])
         strcpy_s(pattern, argv[2] + 1);
     else
         strcpy_s(pattern, argv[2]);
-    int len = (int)strlen(pattern);
+    size_t len = strlen(pattern);
     if(pattern[len - 1] == '#')
         pattern[len - 1] = '\0';
 
@@ -157,8 +160,8 @@ bool cbInstrFindAll(int argc, char* argv[])
             for(size_t j = 0, k = 0; j < printData.size(); j++)
             {
                 if(j)
-                    k += sprintf(msg + k, " ");
-                k += sprintf(msg + k, "%.2X", printData()[j]);
+                    k += sprintf_s(msg + k, sizeof(msg) - k, " ");
+                k += sprintf_s(msg + k, sizeof(msg) - k, "%.2X", printData()[j]);
             }
         }
         else
@@ -190,7 +193,7 @@ bool cbInstrFindAllMem(int argc, char* argv[])
         strcpy_s(pattern, argv[2] + 1);
     else
         strcpy_s(pattern, argv[2]);
-    int len = (int)strlen(pattern);
+    size_t len = strlen(pattern);
     if(pattern[len - 1] == '#')
         pattern[len - 1] = '\0';
     std::vector<PatternByte> searchpattern;
@@ -261,8 +264,8 @@ bool cbInstrFindAllMem(int argc, char* argv[])
             for(size_t j = 0, k = 0; j < printData.size(); j++)
             {
                 if(j)
-                    k += sprintf(msg + k, " ");
-                k += sprintf(msg + k, "%.2X", printData()[j]);
+                    k += sprintf_s(msg + k, sizeof(msg) - k, " ");
+                k += sprintf_s(msg + k, sizeof(msg) - k, "%.2X", printData()[j]);
             }
         }
         else
@@ -281,9 +284,9 @@ bool cbInstrFindAllMem(int argc, char* argv[])
     return true;
 }
 
-static bool cbFindAsm(Capstone* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
+static bool cbFindAsm(Zydis* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
 {
-    if(!disasm || !basicinfo)   //initialize
+    if(!disasm || !basicinfo) //initialize
     {
         GuiReferenceInitialize(refinfo->name);
         GuiReferenceAddColumn(2 * sizeof(duint), GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Address")));
@@ -330,9 +333,10 @@ bool cbInstrFindAsm(int argc, char* argv[])
     unsigned char dest[16];
     int asmsize = 0;
     char error[MAX_ERROR_SIZE] = "";
-    if(!assemble(addr + size / 2, dest, &asmsize, argv[1], error))
+    auto asmFormat = stringformatinline(argv[1]);
+    if(!assemble(addr + size / 2, dest, &asmsize, asmFormat.c_str(), error))
     {
-        dprintf(QT_TRANSLATE_NOOP("DBG", "Failed to assemble \"%s\" (%s)!\n"), argv[1], error);
+        dprintf(QT_TRANSLATE_NOOP("DBG", "Failed to assemble \"%s\" (%s)!\n"), asmFormat.c_str(), error);
         return false;
     }
     BASIC_INSTRUCTION_INFO basicinfo;
@@ -368,13 +372,13 @@ struct VALUERANGE
     duint end;
 };
 
-static bool cbRefFind(Capstone* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
+static bool cbRefFind(Zydis* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
 {
-    if(!disasm || !basicinfo)   //initialize
+    if(!disasm || !basicinfo) //initialize
     {
         GuiReferenceInitialize(refinfo->name);
         GuiReferenceAddColumn(sizeof(duint) * 2, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Address")));
-        GuiReferenceAddColumn(10, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Disassembly")));
+        GuiReferenceAddColumn(100, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Disassembly")));
         GuiReferenceSetRowCount(0);
         GuiReferenceReloadData();
         return true;
@@ -450,13 +454,13 @@ bool cbInstrRefFindRange(int argc, char* argv[])
     return true;
 }
 
-static bool cbRefStr(Capstone* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
+static bool cbRefStr(Zydis* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
 {
-    if(!disasm || !basicinfo)   //initialize
+    if(!disasm || !basicinfo) //initialize
     {
         GuiReferenceInitialize(refinfo->name);
         GuiReferenceAddColumn(2 * sizeof(duint), GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Address")));
-        GuiReferenceAddColumn(64, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Disassembly")));
+        GuiReferenceAddColumn(100, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Disassembly")));
         GuiReferenceAddColumn(500, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "String")));
         GuiReferenceSetSearchStartCol(2); //only search the strings
         GuiReferenceSetRowCount(0);
@@ -465,19 +469,9 @@ static bool cbRefStr(Capstone* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINF
     }
     bool found = false;
     char string[MAX_STRING_SIZE] = "";
-    if(basicinfo->branch)   //branches have no strings (jmp dword [401000])
+    if(basicinfo->branch) //branches have no strings (jmp dword [401000])
         return false;
-    if((basicinfo->type & TYPE_VALUE) == TYPE_VALUE)
-    {
-        if(DbgGetStringAt(basicinfo->value.value, string))
-            found = true;
-    }
-    if((basicinfo->type & TYPE_MEMORY) == TYPE_MEMORY)
-    {
-        if(DbgGetStringAt(basicinfo->memory.value, string))
-            found = true;
-    }
-    if(found)
+    auto addRef = [&]()
     {
         char addrText[20] = "";
         sprintf_s(addrText, "%p", disasm->Address());
@@ -489,8 +483,19 @@ static bool cbRefStr(Capstone* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINF
         else
             GuiReferenceSetCellContent(refinfo->refcount, 1, disasm->InstructionText().c_str());
         GuiReferenceSetCellContent(refinfo->refcount, 2, string);
+        refinfo->refcount++;
+    };
+    if((basicinfo->type & TYPE_VALUE) == TYPE_VALUE)
+    {
+        if(DbgGetStringAt(basicinfo->value.value, string))
+            addRef();
     }
-    return found;
+    if((basicinfo->type & TYPE_MEMORY) == TYPE_MEMORY)
+    {
+        if(DbgGetStringAt(basicinfo->memory.value, string))
+            addRef();
+    }
+    return false;
 }
 
 bool cbInstrRefStr(int argc, char* argv[])
@@ -519,47 +524,87 @@ bool cbInstrRefStr(int argc, char* argv[])
     return true;
 }
 
-static bool cbModCallFind(Capstone* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
+static bool cbModCallFind(Zydis* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
 {
-    if(!disasm || !basicinfo)   //initialize
+    if(!disasm || !basicinfo) //initialize
     {
         GuiReferenceInitialize(refinfo->name);
         GuiReferenceAddColumn(2 * sizeof(duint), GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Address")));
-        GuiReferenceAddColumn(20, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Disassembly")));
+        GuiReferenceAddColumn(100, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Disassembly")));
         GuiReferenceAddColumn(MAX_LABEL_SIZE, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Destination")));
         GuiReferenceSetRowCount(0);
         GuiReferenceReloadData();
         return true;
     }
-    bool found = false;
+    duint foundaddr = 0;
     char label[MAX_LABEL_SIZE] = "";
     char module[MAX_MODULE_SIZE] = "";
-    if(basicinfo->call)   //we are looking for calls
+    duint base = ModBaseFromAddr(disasm->Address()), size = 0;
+    if(!base)
+        base = MemFindBaseAddr(disasm->Address(), &size);
+    else
+        size = ModSizeFromAddr(base);
+    if(!base || !size)
+        return false; //__debugbreak
+    if(basicinfo->call) //we are looking for calls
     {
-        duint ptr = basicinfo->addr > 0 ? basicinfo->addr : basicinfo->memory.value;
-        found = DbgGetLabelAt(ptr, SEG_DEFAULT, label) && !LabelGet(ptr, label) && !strstr(label, "sub_") && DbgGetModuleAt(ptr, module); //a non-user label
+        if(basicinfo->addr && MemIsValidReadPtr(basicinfo->addr, true))
+        {
+            if(basicinfo->addr < base || basicinfo->addr >= base + size) //call api
+                foundaddr = basicinfo->addr;
+            else //call [jmp.api]
+            {
+                BASIC_INSTRUCTION_INFO info;
+                memset(&info, 0, sizeof(BASIC_INSTRUCTION_INFO));
+                if(disasmfast(basicinfo->addr, &info, true) && info.branch && !info.call && info.memory.value) //jmp [addr]
+                {
+                    duint memaddr;
+                    if(MemRead(info.memory.value, &memaddr, sizeof(memaddr), nullptr, true))
+                    {
+                        if((memaddr < base || memaddr >= base + size) && MemIsValidReadPtr(memaddr, true))
+                            foundaddr = memaddr;
+                    }
+                }
+            }
+        }
     }
-    if(found)
+    switch(disasm->GetId())
     {
+    case ZYDIS_MNEMONIC_CALL: //call dword ptr: [&api]
+    case ZYDIS_MNEMONIC_MOV: //mov reg, dword ptr:[&api]
+        if(!foundaddr && basicinfo->memory.value)
+        {
+            duint memaddr;
+            if(MemRead(basicinfo->memory.value, &memaddr, sizeof(memaddr), nullptr, true))
+            {
+                if((memaddr < base || memaddr >= base + size) && ModBaseFromAddr(memaddr))
+                    foundaddr = memaddr;
+            }
+        }
+        break;
+    }
+    if(foundaddr)
+    {
+        auto symbolic = SymGetSymbolicName(foundaddr);
+        if(!symbolic.length())
+            symbolic = StringUtils::sprintf("%p", foundaddr);
         char addrText[20] = "";
-        char moduleTargetText[MAX_MODULE_SIZE] = "";
         sprintf_s(addrText, "%p", disasm->Address());
-        sprintf(moduleTargetText, "%s.%s", module, label);
         GuiReferenceSetRowCount(refinfo->refcount + 1);
         GuiReferenceSetCellContent(refinfo->refcount, 0, addrText);
         char disassembly[GUI_MAX_DISASSEMBLY_SIZE] = "";
         if(GuiGetDisassembly((duint)disasm->Address(), disassembly))
         {
             GuiReferenceSetCellContent(refinfo->refcount, 1, disassembly);
-            GuiReferenceSetCellContent(refinfo->refcount, 2, moduleTargetText);
+            GuiReferenceSetCellContent(refinfo->refcount, 2, symbolic.c_str());
         }
         else
         {
             GuiReferenceSetCellContent(refinfo->refcount, 1, disasm->InstructionText().c_str());
-            GuiReferenceSetCellContent(refinfo->refcount, 2, moduleTargetText);
+            GuiReferenceSetCellContent(refinfo->refcount, 2, symbolic.c_str());
         }
     }
-    return found;
+    return foundaddr != 0;
 }
 
 bool cbInstrModCallFind(int argc, char* argv[])
@@ -669,13 +714,13 @@ struct GUIDRefInfo
     HKEY CLSID;
 };
 
-static bool cbGUIDFind(Capstone* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
+static bool cbGUIDFind(Zydis* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
 {
-    if(!disasm || !basicinfo)   //initialize
+    if(!disasm || !basicinfo) //initialize
     {
         GuiReferenceInitialize(refinfo->name);
         GuiReferenceAddColumn(2 * sizeof(duint), GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Address")));
-        GuiReferenceAddColumn(20, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Disassembly")));
+        GuiReferenceAddColumn(100, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Disassembly")));
         GuiReferenceAddColumn(40, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "GUID")));
         GuiReferenceAddColumn(20, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "ProgId")));
         GuiReferenceAddColumn(40, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Path")));
@@ -939,7 +984,7 @@ static int yaraScanCallback(int message, void* message_data, void* user_data)
                         pattern = yara_print_string(match->data, match->match_length);
                     auto offset = duint(match->base + match->offset);
                     duint addr;
-                    if(scanInfo->rawFile)   //convert raw offset to virtual offset
+                    if(scanInfo->rawFile) //convert raw offset to virtual offset
                         addr = valfileoffsettova(scanInfo->modname, offset);
                     else
                         addr = base + offset;
@@ -1016,7 +1061,7 @@ bool cbInstrYara(int argc, char* argv[])
         base = addr;
     }
     std::vector<unsigned char> rawFileData;
-    if(rawFile)   //read the file from disk
+    if(rawFile) //read the file from disk
     {
         char modPath[MAX_PATH] = "";
         if(!ModPathFromAddr(base, modPath, MAX_PATH))
@@ -1034,10 +1079,10 @@ bool cbInstrYara(int argc, char* argv[])
     Memory<uint8_t*> data(size);
     if(rawFile)
         memcpy(data(), rawFileData.data(), size);
-    else if(!MemRead(base, data(), size))
+    else
     {
-        dprintf(QT_TRANSLATE_NOOP("DBG", "Failed to read memory page %p[%X]!\n"), base, DWORD(size));
-        return false;
+        memset(data(), 0xCC, data.size());
+        MemReadDumb(base, data(), size);
     }
 
     String rulesContent;
@@ -1052,7 +1097,7 @@ bool cbInstrYara(int argc, char* argv[])
     if(yr_compiler_create(&yrCompiler) == ERROR_SUCCESS)
     {
         yr_compiler_set_callback(yrCompiler, yaraCompilerCallback, 0);
-        if(yr_compiler_add_string(yrCompiler, rulesContent.c_str(), nullptr) == 0)    //no errors found
+        if(yr_compiler_add_string(yrCompiler, rulesContent.c_str(), nullptr) == 0) //no errors found
         {
             YR_RULES* yrRules;
             if(yr_compiler_get_rules(yrCompiler, &yrRules) == ERROR_SUCCESS)

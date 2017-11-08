@@ -32,21 +32,26 @@ bool cbScriptMsgyn(int argc, char* argv[])
 
 bool cbInstrLog(int argc, char* argv[])
 {
-    if(argc == 1)   //just log newline
+    auto logputs = [](const char* msg)
     {
-        dputs_untranslated("");
+        dputs_untranslated(msg);
+        scriptlog(msg);
+    };
+    if(argc == 1) //just log newline
+    {
+        logputs("");
         return true;
     }
-    if(argc == 2)  //inline logging: log "format {rax}"
+    if(argc == 2) //inline logging: log "format {rax}"
     {
-        dputs_untranslated(stringformatinline(argv[1]).c_str());
+        logputs(stringformatinline(argv[1]).c_str());
     }
     else //log "format {0} string", arg1, arg2, argN
     {
         FormatValueVector formatArgs;
         for(auto i = 2; i < argc; i++)
             formatArgs.push_back(argv[i]);
-        dputs_untranslated(stringformat(argv[1], formatArgs).c_str());
+        logputs(stringformat(argv[1], formatArgs).c_str());
     }
     return true;
 }

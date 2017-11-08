@@ -11,7 +11,9 @@ public:
     explicit LogView(QWidget* parent = 0);
     ~LogView();
     void setupContextMenu();
-    void contextMenuEvent(QContextMenuEvent* event);
+    void contextMenuEvent(QContextMenuEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
 public slots:
     void refreshShortcutsSlot();
@@ -29,6 +31,9 @@ public slots:
     void clearLogSlot();
     void saveSlot();
     void toggleLoggingSlot();
+    void flushTimerSlot();
+    void flushLogSlot();
+
 private:
     bool loggingEnabled;
     bool autoScroll;
@@ -47,6 +52,9 @@ private:
     QAction* actionCopyToDebuggeeNotes;
 
     FILE* logRedirection;
+    QString logBuffer;
+    QTimer* flushTimer;
+    bool flushLog;
 };
 
 #endif // LOGVIEW_H

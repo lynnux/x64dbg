@@ -4,6 +4,7 @@
 #include "variable.h"
 #include "_scriptapi_stack.h"
 #include "debugger.h"
+#include <intrin.h>
 
 static bool ReadWriteVariable(const char* varname, const std::function<bool(duint*, int)> & callback)
 {
@@ -25,7 +26,7 @@ static bool ReadWriteVariable(const char* varname, const std::function<bool(duin
     if(!isvar || !valtostring(varname, set_value, true))
     {
         duint value;
-        if(valfromstring(varname, &value))  //if the var is a value already it's an invalid destination
+        if(valfromstring(varname, &value)) //if the var is a value already it's an invalid destination
         {
             dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid variable \"%s\"\n"), varname);
             return false;
@@ -287,7 +288,7 @@ bool cbInstrCmp(int argc, char* argv[])
         ezflag = 1;
     else
         ezflag = 0;
-    if(valuesignedcalc())   //signed comparision
+    if(valuesignedcalc()) //signed comparision
     {
         if((dsint)arg1 < (dsint)arg2)
             bsflag = 0;
@@ -312,23 +313,15 @@ bool cbInstrMov(int argc, char* argv[])
     if(IsArgumentsLessThan(argc, 3))
         return false;
     String srcText = argv[2];
-    if(srcText[0] == '#' && srcText[srcText.length() - 1] == '#')   //handle mov addr, #DATA#
+    if(srcText[0] == '#' && srcText[srcText.length() - 1] == '#') //handle mov addr, #DATA#
     {
         //do some checks on the data
         String dataText = srcText.substr(1, srcText.length() - 2);
-        int len = (int)dataText.length();
-        if(len % 2)
+        std::vector<unsigned char> data;
+        if(!StringUtils::FromCompressedHex(dataText, data))
         {
-            dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid hex string \"%s\" (length not divisible by 2)\n"), dataText.c_str());
+            dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid hex string \"%s\"\n"), dataText.c_str());
             return false;
-        }
-        for(int i = 0; i < len; i++)
-        {
-            if(!isxdigit(dataText[i]))
-            {
-                dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid hex string \"%s\" (contains invalid characters)\n"), dataText.c_str());
-                return false;
-            }
         }
         //Check the destination
         duint dest;
@@ -337,23 +330,8 @@ bool cbInstrMov(int argc, char* argv[])
             dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid destination \"%s\"\n"), argv[1]);
             return false;
         }
-        //Convert text to byte array (very ugly)
-        Memory<unsigned char*> data(len / 2);
-        for(int i = 0, j = 0; i < len; i += 2, j++)
-        {
-            char b[3] = "";
-            b[0] = dataText[i];
-            b[1] = dataText[i + 1];
-            int res = 0;
-            if(sscanf_s(b, "%X", &res) != 1)
-            {
-                dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid hex byte \"%s\"\n"), b);
-                return false;
-            }
-            data()[j] = res;
-        }
         //Move data to destination
-        if(!MemWrite(dest, data(), data.size()))
+        if(!MemPatch(dest, data.data(), data.size()))
         {
             dprintf(QT_TRANSLATE_NOOP("DBG", "Failed to write to %p\n"), dest);
             return false;
@@ -377,7 +355,7 @@ bool cbInstrMov(int argc, char* argv[])
         if(!isvar || !valtostring(argv[1], set_value, true))
         {
             duint value;
-            if(valfromstring(argv[1], &value))  //if the var is a value already it's an invalid destination
+            if(valfromstring(argv[1], &value)) //if the var is a value already it's an invalid destination
             {
                 dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid dest \"%s\"\n"), argv[1]);
                 return false;

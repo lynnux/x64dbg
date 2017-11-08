@@ -7,10 +7,11 @@
 #include "debugger.h"
 #include "variable.h"
 #include "loop.h"
-#include "capstone_wrapper.h"
+#include "zydis_wrapper.h"
 #include "mnemonichelp.h"
 #include "value.h"
 #include "symbolinfo.h"
+#include "argument.h"
 
 bool cbBadCmd(int argc, char* argv[])
 {
@@ -18,7 +19,7 @@ bool cbBadCmd(int argc, char* argv[])
     int valsize = 0;
     bool isvar = false;
     bool hexonly = false;
-    if(valfromstring(*argv, &value, false, false, &valsize, &isvar, &hexonly, true))   //dump variable/value/register/etc
+    if(valfromstring(*argv, &value, false, false, &valsize, &isvar, &hexonly, true)) //dump variable/value/register/etc
     {
         varset("$ans", value, true);
         if(valsize)
@@ -29,11 +30,11 @@ bool cbBadCmd(int argc, char* argv[])
         auto symbolic = SymGetSymbolicName(value);
         if(symbolic.length())
             symbolic = " " + symbolic;
-        if(isvar)  // and *cmd!='.' and *cmd!='x') //prevent stupid 0=0 stuff
+        if(isvar) // and *cmd!='.' and *cmd!='x') //prevent stupid 0=0 stuff
         {
             if(value > 9 && !hexonly)
             {
-                if(!valuesignedcalc())   //signed numbers
+                if(!valuesignedcalc()) //signed numbers
 #ifdef _WIN64
                     sprintf_s(format_str, "%%s=%%.%dllX (%%llud)%%s\n", valsize); // TODO: This and the following statements use "%llX" for a "int"-typed variable. Maybe we can use "%X" everywhere?
 #else //x86
@@ -57,7 +58,7 @@ bool cbBadCmd(int argc, char* argv[])
         {
             if(value > 9 && !hexonly)
             {
-                if(!valuesignedcalc())   //signed numbers
+                if(!valuesignedcalc()) //signed numbers
 #ifdef _WIN64
                     sprintf_s(format_str, "%%s=%%.%dllX (%%llud)%%s\n", valsize);
 #else //x86
@@ -89,7 +90,7 @@ bool cbBadCmd(int argc, char* argv[])
     }
     else //unknown command
     {
-        dprintf(QT_TRANSLATE_NOOP("DBG", "Unknown command/expression: \"%s\"\n"), *argv);
+        dprintf_untranslated("Unknown command/expression: \"%s\"\n", *argv);
         return false;
     }
     return true;
@@ -105,8 +106,10 @@ bool cbDebugBenchmark(int argc, char* argv[])
         LabelSet(i, "test", false);
         BookmarkSet(i, false);
         FunctionAdd(i, i, false);
+        ArgumentAdd(i, i, false);
+        LoopAdd(i, i, false);
     }
-    dprintf(QT_TRANSLATE_NOOP("DBG", "%ums\n"), GetTickCount() - ticks);
+    dprintf_untranslated("%ums\n", GetTickCount() - ticks);
     return true;
 }
 
@@ -204,7 +207,7 @@ bool cbInstrCopystr(int argc, char* argv[])
     return true;
 }
 
-bool cbInstrCapstone(int argc, char* argv[])
+bool cbInstrZydis(int argc, char* argv[])
 {
     if(IsArgumentsLessThan(argc, 2))
         return false;
@@ -212,14 +215,14 @@ bool cbInstrCapstone(int argc, char* argv[])
     duint addr = 0;
     if(!valfromstring(argv[1], &addr) || !MemIsValidReadPtr(addr))
     {
-        dprintf("Invalid address \"%s\"\n", argv[1]);
+        dprintf_untranslated("Invalid address \"%s\"\n", argv[1]);
         return false;
     }
 
     unsigned char data[16];
     if(!MemRead(addr, data, sizeof(data)))
     {
-        dprintf("Could not read memory at %p\n", addr);
+        dprintf_untranslated("Could not read memory at %p\n", addr);
         return false;
     }
 
@@ -227,40 +230,49 @@ bool cbInstrCapstone(int argc, char* argv[])
         if(!valfromstring(argv[2], &addr, false))
             return false;
 
-    Capstone cp;
+    Zydis cp;
     if(!cp.Disassemble(addr, data))
     {
-        dputs("Failed to disassemble!\n");
+        dputs_untranslated("Failed to disassemble!\n");
         return false;
     }
 
-    const cs_insn* instr = cp.GetInstr();
-    const cs_x86 & x86 = cp.x86();
-    int argcount = x86.op_count;
-    dprintf("%s %s\n", instr->mnemonic, instr->op_str);
-    dprintf("size: %d, id: %d, opcount: %d\n", cp.Size(), cp.GetId(), cp.OpCount());
+    auto instr = cp.GetInstr();
+    int argcount = instr->operandCount;
+    dputs_untranslated(cp.InstructionText(true).c_str());
+    dprintf_untranslated("size: %d, id: %d, opcount: %d\n", cp.Size(), cp.GetId(), instr->operandCount);
+    auto rwstr = [](uint8_t access)
+    {
+        if(access & ZYDIS_OPERAND_ACTION_READ && access & ZYDIS_OPERAND_ACTION_WRITE)
+            return "read+write";
+        if(access & ZYDIS_OPERAND_ACTION_READ)
+            return "read";
+        if(access & ZYDIS_OPERAND_ACTION_WRITE)
+            return "write";
+        return "???";
+    };
     for(int i = 0; i < argcount; i++)
     {
-        const cs_x86_op & op = x86.operands[i];
-        dprintf("operand \"%s\" %d, ", cp.OperandText(i).c_str(), i + 1);
+        const auto & op = instr->operands[i];
+        dprintf("operand %d (size: %d, access: %s) \"%s\", ", i + 1, op.size, rwstr(op.action), cp.OperandText(i).c_str());
         switch(op.type)
         {
-        case X86_OP_REG:
-            dprintf("register: %s\n", cp.RegName((x86_reg)op.reg));
+        case ZYDIS_OPERAND_TYPE_REGISTER:
+            dprintf_untranslated("register: %s\n", cp.RegName(op.reg.value));
             break;
-        case X86_OP_IMM:
-            dprintf("immediate: 0x%p\n", op.imm);
+        case ZYDIS_OPERAND_TYPE_IMMEDIATE:
+            dprintf_untranslated("immediate: 0x%p\n", op.imm.value);
             break;
-        case X86_OP_MEM:
+        case ZYDIS_OPERAND_TYPE_MEMORY:
         {
             //[base + index * scale +/- disp]
-            const x86_op_mem & mem = op.mem;
-            dprintf("memory segment: %s, base: %s, index: %s, scale: %d, displacement: 0x%p\n",
-                    cp.RegName((x86_reg)mem.segment),
-                    cp.RegName((x86_reg)mem.base),
-                    cp.RegName((x86_reg)mem.index),
-                    mem.scale,
-                    mem.disp);
+            const auto & mem = op.mem;
+            dprintf_untranslated("memory segment: %s, base: %s, index: %s, scale: %d, displacement: 0x%p\n",
+                                 cp.RegName(mem.segment),
+                                 cp.RegName(mem.base),
+                                 cp.RegName(mem.index),
+                                 mem.scale,
+                                 mem.disp.value);
         }
         break;
         }
@@ -277,7 +289,7 @@ bool cbInstrVisualize(int argc, char* argv[])
     duint maxaddr;
     if(!valfromstring(argv[1], &start) || !valfromstring(argv[2], &maxaddr))
     {
-        dputs("Invalid arguments!");
+        dputs_untranslated("Invalid arguments!");
         return false;
     }
     //actual algorithm
@@ -290,7 +302,7 @@ bool cbInstrVisualize(int argc, char* argv[])
     //DisassemblyBreakpointColor = #000000
     {
         //initialize
-        Capstone _cp;
+        Zydis _cp;
         duint _base = start;
         duint _size = maxaddr - start;
         Memory<unsigned char*> _data(_size);
@@ -320,31 +332,30 @@ bool cbInstrVisualize(int argc, char* argv[])
             const unsigned char* curData = (addr >= _base && addr < _base + _size) ? _data() + (addr - _base) : nullptr;
             if(_cp.Disassemble(addr, curData, MAX_DISASM_BUFFER))
             {
-                if(addr + _cp.Size() > maxaddr)      //we went past the maximum allowed address
+                if(addr + _cp.Size() > maxaddr) //we went past the maximum allowed address
                     break;
 
-                const cs_x86_op & operand = _cp.x86().operands[0];
-                if((_cp.InGroup(CS_GRP_JUMP) || _cp.IsLoop()) && operand.type == X86_OP_IMM)      //jump
+                if((_cp.IsJump() || _cp.IsLoop()) && _cp.OpCount() && _cp[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) //jump
                 {
-                    duint dest = (duint)operand.imm;
+                    duint dest = (duint)_cp[0].imm.value.u;
 
-                    if(dest >= maxaddr)      //jump across function boundaries
+                    if(dest >= maxaddr) //jump across function boundaries
                     {
                         //currently unused
                     }
-                    else if(dest > addr && dest > fardest)      //save the farthest JXX destination forward
+                    else if(dest > addr && dest > fardest) //save the farthest JXX destination forward
                     {
                         fardest = dest;
                     }
-                    else if(end && dest < end && _cp.GetId() == X86_INS_JMP)      //save the last JMP backwards
+                    else if(end && dest < end && _cp.GetId() == ZYDIS_MNEMONIC_JMP) //save the last JMP backwards
                     {
                         jumpback = addr;
                     }
                 }
-                else if(_cp.InGroup(CS_GRP_RET))      //possible function end?
+                else if(_cp.IsRet()) //possible function end?
                 {
                     end = addr;
-                    if(fardest < addr)     //we stop if the farthest JXX destination forward is before this RET
+                    if(fardest < addr) //we stop if the farthest JXX destination forward is before this RET
                         break;
                 }
 
@@ -369,28 +380,28 @@ bool cbInstrMeminfo(int argc, char* argv[])
 {
     if(argc < 3)
     {
-        dputs(QT_TRANSLATE_NOOP("DBG", "Usage: meminfo a/r, addr"));
+        dputs_untranslated("Usage: meminfo a/r, addr");
         return false;
     }
     duint addr;
     if(!valfromstring(argv[2], &addr))
     {
-        dputs(QT_TRANSLATE_NOOP("DBG", "Invalid argument"));
+        dputs_untranslated("Invalid argument");
         return false;
     }
     if(argv[1][0] == 'a')
     {
         unsigned char buf = 0;
         if(!ReadProcessMemory(fdProcessInfo->hProcess, (void*)addr, &buf, sizeof(buf), nullptr))
-            dputs(QT_TRANSLATE_NOOP("DBG", "ReadProcessMemory failed!"));
+            dputs_untranslated("ReadProcessMemory failed!");
         else
-            dprintf(QT_TRANSLATE_NOOP("DBG", "Data: %02X\n"), buf);
+            dprintf_untranslated("Data: %02X\n", buf);
     }
     else if(argv[1][0] == 'r')
     {
         MemUpdateMap();
         GuiUpdateMemoryView();
-        dputs(QT_TRANSLATE_NOOP("DBG", "Memory map updated!"));
+        dputs_untranslated("Memory map updated!");
     }
     return true;
 }
@@ -408,7 +419,7 @@ bool cbInstrBriefcheck(int argc, char* argv[])
         return false;
     Memory<unsigned char*> buffer(size + 16);
     DbgMemRead(base, buffer(), size);
-    Capstone cp;
+    Zydis cp;
     std::unordered_set<String> reported;
     for(duint i = 0; i < size;)
     {
@@ -423,7 +434,7 @@ bool cbInstrBriefcheck(int argc, char* argv[])
         if(brief.length() || reported.count(mnem))
             continue;
         reported.insert(mnem);
-        dprintf("%p: %s\n", cp.Address(), mnem.c_str());
+        dprintf_untranslated("%p: %s\n", cp.Address(), mnem.c_str());
     }
     return true;
 }
@@ -432,6 +443,23 @@ bool cbInstrFocusinfo(int argc, char* argv[])
 {
     ACTIVEVIEW activeView;
     GuiGetActiveView(&activeView);
-    dprintf("activeTitle: %s, activeClass: %s\n", activeView.title, activeView.className);
+    dprintf_untranslated("activeTitle: %s, activeClass: %s\n", activeView.title, activeView.className);
+    return true;
+}
+
+bool cbInstrFlushlog(int argc, char* argv[])
+{
+    GuiFlushLog();
+    return true;
+}
+
+extern char animate_command[deflen];
+
+bool cbInstrAnimateWait(int argc, char* argv[])
+{
+    while(DbgIsDebugging() && dbgisrunning() && animate_command[0] != 0) //while not locked (NOTE: possible deadlock)
+    {
+        Sleep(1);
+    }
     return true;
 }

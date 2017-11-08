@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>381</width>
-    <height>508</height>
+    <height>514</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -33,7 +33,7 @@
       <bool>true</bool>
      </property>
      <property name="currentIndex">
-      <number>0</number>
+      <number>4</number>
      </property>
      <widget class="QWidget" name="tabEvents">
       <attribute name="title">
@@ -325,6 +325,13 @@
         </widget>
        </item>
        <item>
+        <widget class="QCheckBox" name="chkNoWow64SingleStepWorkaround">
+         <property name="text">
+          <string>Disable WOW64 Single Step Workaround</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <layout class="QHBoxLayout" name="horizontalLayout_6">
          <item>
           <widget class="QLabel" name="lblMaxTraceCount">
@@ -511,6 +518,85 @@
         </widget>
        </item>
        <item>
+        <widget class="QCheckBox" name="chkNoCurrentModuleText">
+         <property name="text">
+          <string>Hide module name for local memory addresses</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkPermanentHighlightingMode">
+         <property name="text">
+          <string>Permanent highlighting mode</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chk0xPrefixValues">
+         <property name="text">
+          <string>0x prefix for values</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkNoSourceLinesAutoComments">
+         <property name="text">
+          <string>Don't show source lines in comments</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout_7">
+         <item>
+          <widget class="QLabel" name="lblMaximumModuleNameSize">
+           <property name="enabled">
+            <bool>true</bool>
+           </property>
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>Maximum module name size</string>
+           </property>
+           <property name="buddy">
+            <cstring>spinMaximumModuleNameSize</cstring>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSpinBox" name="spinMaximumModuleNameSize">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="minimum">
+            <number>-1</number>
+           </property>
+           <property name="maximum">
+            <number>2147483647</number>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
         <spacer name="verticalSpacer_2">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
@@ -582,6 +668,27 @@
         <widget class="QCheckBox" name="chkNoForegroundWindow">
          <property name="text">
           <string>Do not call SetForegroundWindow</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkShowGraphRva">
+         <property name="text">
+          <string>Show RVA addresses in graph view</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkShowExitConfirmation">
+         <property name="text">
+          <string>Show exit confirmation dialog</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkDisableAutoComplete">
+         <property name="text">
+          <string>Disable auto completion in goto dialog</string>
          </property>
         </widget>
        </item>
@@ -696,6 +803,27 @@
         <widget class="QCheckBox" name="chkUtf16LogRedirect">
          <property name="text">
           <string>UTF-16 Log Redirect*</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkUseLocalHelpFile">
+         <property name="text">
+          <string>Use local help file (x64dbg.chm)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkQueryProcessCookie">
+         <property name="text">
+          <string>Query process cookie*</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkQueryWorkingSet">
+         <property name="text">
+          <string>Query working set before reading memory</string>
          </property>
         </widget>
        </item>

@@ -46,12 +46,8 @@ QString SearchListViewTable::paintContent(QPainter* painter, dsint rowBase, int 
         isaddr = false;
     if(!getRowCount())
         isaddr = false;
-    ULONGLONG val = 0;
-    duint wVA;
-    if(sscanf_s(text.toUtf8().constData(), "%llX", &val) != 1 || !val)
-        isaddr = false;
-    else
-        wVA = val;
+
+    duint wVA = duint(text.toULongLong(&isaddr, 16));
     auto wIsTraced = isaddr && DbgFunctions()->GetTraceRecordHitCount(wVA) != 0;
     QColor lineBackgroundColor;
     bool isBackgroundColorSet;
@@ -263,7 +259,7 @@ QString SearchListViewTable::paintContent(QPainter* painter, dsint rowBase, int 
                 }
             }
         }
-        painter->drawText(QRect(x + 4, y , w - 4 , h), Qt::AlignVCenter | Qt::AlignLeft, text);
+        painter->drawText(QRect(x + 4, y, w - 4, h), Qt::AlignVCenter | Qt::AlignLeft, text);
         text = "";
     }
     else if(highlightText.length() && text.contains(highlightText, Qt::CaseInsensitive))

@@ -101,8 +101,7 @@ void CPUSideBar::reload()
 void CPUSideBar::changeTopmostAddress(dsint i)
 {
     topVA = i;
-    memset(&regDump, 0, sizeof(REGDUMP));
-    DbgGetRegDump(&regDump);
+    DbgGetRegDumpEx(&regDump, sizeof(REGDUMP));
     reload();
 }
 
@@ -384,26 +383,57 @@ void CPUSideBar::mouseReleaseEvent(QMouseEvent* e)
     //if(y < bulletY - mBulletRadius || y > bulletY + bulletRadius)
     //    return;
 
-
-    QString wCmd;
-    // create --> disable --> delete --> create --> ...
-    switch(Breakpoints::BPState(bp_normal, wVA))
+    if(e->button() == Qt::LeftButton)
     {
-    case bp_enabled:
-        // breakpoint exists and is enabled --> disable breakpoint
-        wCmd = "bd " + ToPtrString(wVA);
+        QString wCmd;
+        // create --> disable --> delete --> create --> ...
+        switch(Breakpoints::BPState(bp_normal, wVA))
+        {
+        case bp_enabled:
+            // breakpoint exists and is enabled --> disable breakpoint
+            wCmd = "bd ";
+            break;
+        case bp_disabled:
+            // is disabled --> delete or enable
+            if(Breakpoints::BPTrival(bp_normal, wVA))
+                wCmd = "bc ";
+            else
+                wCmd = "be ";
+            break;
+        case bp_non_existent:
+            // no breakpoint was found --> create breakpoint
+            wCmd = "bp ";
+            break;
+        }
+        wCmd += ToPtrString(wVA);
         DbgCmdExec(wCmd.toUtf8().constData());
-        break;
-    case bp_disabled:
-        // is disabled --> delete
-        wCmd = "bc " + ToPtrString(wVA);
-        DbgCmdExec(wCmd.toUtf8().constData());
-        break;
-    case bp_non_existent:
-        // no breakpoint was found --> create breakpoint
-        wCmd = "bp " + ToPtrString(wVA);
-        DbgCmdExec(wCmd.toUtf8().constData());
-        break;
+    }
+}
+
+void CPUSideBar::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    const int line = event->y() / fontHeight;
+    if(line >= mInstrBuffer->size())
+        return;
+    const bool CheckBoxPresent = isFoldingGraphicsPresent(line);
+
+    if(CheckBoxPresent)
+    {
+        if(event->x() > width() - fontHeight - mBulletXOffset - mBulletRadius && event->x() < width() - mBulletXOffset - mBulletRadius)
+        {
+            if(event->button() == Qt::LeftButton)
+            {
+                duint wVA = mInstrBuffer->at(line).rva + mDisas->getBase();
+                duint start = mCodeFoldingManager.getFoldBegin(wVA);
+                duint end = mCodeFoldingManager.getFoldEnd(wVA);
+                if(mCodeFoldingManager.isFolded(wVA) || (start <= regDump.regcontext.cip && end >= regDump.regcontext.cip))
+                {
+                    mDisas->setSingleSelection(start - mDisas->getBase());
+                    mDisas->expandSelectionUpTo(end - mDisas->getBase());
+                    mDisas->setFocus();
+                }
+            }
+        }
     }
 }
 
@@ -412,6 +442,7 @@ void CPUSideBar::mouseMoveEvent(QMouseEvent* event)
     if(!DbgIsDebugging() || !mInstrBuffer->size())
     {
         QAbstractScrollArea::mouseMoveEvent(event);
+        setCursor(QCursor(Qt::ArrowCursor));
         return;
     }
 
@@ -430,6 +461,7 @@ void CPUSideBar::mouseMoveEvent(QMouseEvent* event)
             (mLine < 0 || mLine >= mInstrBuffer->size()))
     {
         QToolTip::hideText();
+        setCursor(QCursor(Qt::ArrowCursor));
         return;
     }
 
@@ -448,6 +480,7 @@ void CPUSideBar::mouseMoveEvent(QMouseEvent* event)
         QToolTip::showText(globalMousePos, tr("Breakpoint Not Set"));
         break;
     }
+    setCursor(QCursor(Qt::PointingHandCursor));
 }
 
 void CPUSideBar::drawJump(QPainter* painter, int startLine, int endLine, int jumpoffset, bool conditional, bool isexecute, bool isactive)

@@ -48,6 +48,8 @@ public slots:
     void gotoFileOffsetSlot();
     void gotoStartSlot();
     void gotoEndSlot();
+    void gotoPreviousReferenceSlot();
+    void gotoNextReferenceSlot();
 
     void hexAsciiSlot();
     void hexUnicodeSlot();
@@ -88,6 +90,7 @@ public slots:
     void binaryPasteIgnoreSizeSlot();
     void binarySaveToFileSlot();
     void findPattern();
+    void copyFileOffsetSlot();
     void undoSelectionSlot();
     void followStackSlot();
     void findReferencesSlot();
@@ -105,8 +108,6 @@ public slots:
     void followInDumpNSlot();
     void allocMemorySlot();
 
-    void gotoNextSlot();
-    void gotoPrevSlot();
     void followInMemoryMapSlot();
 
 private:

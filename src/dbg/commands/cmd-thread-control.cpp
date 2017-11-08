@@ -24,13 +24,15 @@ bool cbDebugCreatethread(int argc, char* argv[])
             return false;
     }
     DWORD ThreadId = 0;
-    if(ThreaderCreateRemoteThread(Entry, true, reinterpret_cast<LPVOID>(Argument), &ThreadId) != 0)
+    auto hThread = CreateRemoteThread(fdProcessInfo->hProcess, nullptr, 0, LPTHREAD_START_ROUTINE(Entry), LPVOID(Argument), 0, &ThreadId);
+    if(!hThread)
     {
         dputs(QT_TRANSLATE_NOOP("DBG", "Create thread failed!"));
         return false;
     }
     else
     {
+        CloseHandle(hThread);
         char label[MAX_LABEL_SIZE];
         if(!LabelGet(Entry, label))
             label[0] = 0;
@@ -50,7 +52,7 @@ bool cbDebugSwitchthread(int argc, char* argv[])
     if(argc > 1)
         if(!valfromstring(argv[1], &threadid, false))
             return false;
-    if(!ThreadIsValid((DWORD)threadid))  //check if the thread is valid
+    if(!ThreadIsValid((DWORD)threadid)) //check if the thread is valid
     {
         dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid thread %X\n"), DWORD(threadid));
         return false;
@@ -72,7 +74,7 @@ bool cbDebugSuspendthread(int argc, char* argv[])
     if(argc > 1)
         if(!valfromstring(argv[1], &threadid, false))
             return false;
-    if(!ThreadIsValid((DWORD)threadid))  //check if the thread is valid
+    if(!ThreadIsValid((DWORD)threadid)) //check if the thread is valid
     {
         dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid thread %X\n"), DWORD(threadid));
         return false;
@@ -94,7 +96,7 @@ bool cbDebugResumethread(int argc, char* argv[])
     if(argc > 1)
         if(!valfromstring(argv[1], &threadid, false))
             return false;
-    if(!ThreadIsValid((DWORD)threadid))  //check if the thread is valid
+    if(!ThreadIsValid((DWORD)threadid)) //check if the thread is valid
     {
         dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid thread %X\n"), DWORD(threadid));
         return false;
@@ -120,7 +122,7 @@ bool cbDebugKillthread(int argc, char* argv[])
     if(argc > 2)
         if(!valfromstring(argv[2], &exitcode, false))
             return false;
-    if(!ThreadIsValid((DWORD)threadid))  //check if the thread is valid
+    if(!ThreadIsValid((DWORD)threadid)) //check if the thread is valid
     {
         dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid thread %X\n"), DWORD(threadid));
         return false;
@@ -184,7 +186,7 @@ bool cbDebugSetPriority(int argc, char* argv[])
     }
     else
     {
-        switch(priority)  //check if the priority value is valid
+        switch((int)priority) //check if the priority value is valid
         {
         case THREAD_PRIORITY_NORMAL:
         case THREAD_PRIORITY_ABOVE_NORMAL:
@@ -199,7 +201,7 @@ bool cbDebugSetPriority(int argc, char* argv[])
             return false;
         }
     }
-    if(!ThreadIsValid((DWORD)threadid))  //check if the thread is valid
+    if(!ThreadIsValid((DWORD)threadid)) //check if the thread is valid
     {
         dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid thread %X\n"), DWORD(threadid));
         return false;

@@ -275,5 +275,41 @@
         <file>images/visitstruct.png</file>
         <file>images/structaddr.png</file>
         <file>images/virtual.png</file>
+        <file>images/uac.png</file>
+        <file>images/hidetab.png</file>
+        <file>images/variables.png</file>
+        <file>images/lib_load.png</file>
+        <file>images/lib_free.png</file>
+        <file>images/christmas1.png</file>
+        <file>images/christmas2.png</file>
+        <file>images/christmas3.png</file>
+        <file>images/christmas4.png</file>
+        <file>images/christmas5.png</file>
+        <file>images/christmas6.png</file>
+        <file>images/christmas7.png</file>
+        <file>images/christmas8.png</file>
+        <file>images/image.png</file>
+        <file>images/medium.png</file>
+        <file>images/narrow.png</file>
+        <file>images/wide.png</file>
+        <file>images/layout.png</file>
+        <file>images/summary.png</file>
+        <file>images/edit-script.png</file>
+        <file>images/load-script.png</file>
+        <file>images/import.png</file>
+        <file>images/easter1.png</file>
+        <file>images/easter2.png</file>
+        <file>images/easter3.png</file>
+        <file>images/easter4.png</file>
+        <file>images/easter5.png</file>
+        <file>images/easter6.png</file>
+        <file>images/easter7.png</file>
+        <file>images/easter8.png</file>
+        <file>images/egg.wav</file>
+        <file>images/localvars.png</file>
+        <file>images/nextref.png</file>
+        <file>images/prevref.png</file>
+        <file>images/bug.png</file>
+        <file>images/donation_qr.png</file>
     </qresource>
 </RCC>

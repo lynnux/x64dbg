@@ -5,6 +5,8 @@
 #include "variable.h"
 #include "filehelper.h"
 #include "value.h"
+#include "stringformat.h"
+#include "comment.h"
 
 bool cbDebugAlloc(int argc, char* argv[])
 {
@@ -22,6 +24,8 @@ bool cbDebugAlloc(int argc, char* argv[])
         dprintf("%p\n", mem);
     if(mem)
         varset("$lastalloc", mem, true);
+    if(mem)
+        CommentSet(mem, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "User-allocated memory")), true);
     //update memory map
     MemUpdateMap();
     GuiUpdateMemoryView();
@@ -161,7 +165,7 @@ bool cbInstrSavedata(int argc, char* argv[])
         return false;
     }
 
-    String name = argv[1];
+    String name = stringformatinline(argv[1]);
     if(name == ":memdump:")
         name = StringUtils::sprintf("%s\\memdumps\\memdump_%X_%p_%x.bin", szProgramDir, fdProcessInfo->dwProcessId, addr, size);
 
@@ -171,9 +175,9 @@ bool cbInstrSavedata(int argc, char* argv[])
         return false;
     }
 #ifdef _WIN64
-    dprintf(QT_TRANSLATE_NOOP("DBG", "%p[% llX] written to \"%s\" !\n"), addr, size, name.c_str());
+    dprintf(QT_TRANSLATE_NOOP("DBG", "%p[%llX] written to \"%s\" !\n"), addr, size, name.c_str());
 #else //x86
-    dprintf(QT_TRANSLATE_NOOP("DBG", "%p[% X] written to \"%s\" !\n"), addr, size, name.c_str());
+    dprintf(QT_TRANSLATE_NOOP("DBG", "%p[%X] written to \"%s\" !\n"), addr, size, name.c_str());
 #endif
 
     return true;

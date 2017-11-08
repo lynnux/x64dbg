@@ -7,12 +7,12 @@
 WatchView::WatchView(CPUMultiDump* parent) : StdTable(parent)
 {
     int charWidth = getCharWidth();
-    addColumnAt(8 + charWidth * 12, tr("Name"), false);
-    addColumnAt(8 + charWidth * 20, tr("Expression"), false);
-    addColumnAt(8 + charWidth * sizeof(duint) * 2, tr("Value"), false);
-    addColumnAt(8 + charWidth * 8, tr("Type"), false);
-    addColumnAt(150, tr("Watchdog Mode"), false);
-    addColumnAt(30, tr("ID"), false);
+    addColumnAt(8 + charWidth * 12, tr("Name"), true);
+    addColumnAt(8 + charWidth * 20, tr("Expression"), true);
+    addColumnAt(8 + charWidth * sizeof(duint) * 2, tr("Value"), true);
+    addColumnAt(8 + charWidth * 8, tr("Type"), true);
+    addColumnAt(150, tr("Watchdog Mode"), true);
+    addColumnAt(30, tr("ID"), true, "", SortBy::AsInt);
 
     connect(Bridge::getBridge(), SIGNAL(updateWatch()), this, SLOT(updateWatch()));
     connect(this, SIGNAL(contextMenuSignal(QPoint)), this, SLOT(contextMenuSlot(QPoint)));
@@ -27,11 +27,14 @@ void WatchView::updateWatch()
     if(!DbgIsDebugging())
     {
         setRowCount(0);
+        setSingleSelection(0);
         return;
     }
     BridgeList<WATCHINFO> WatchList;
     DbgGetWatchList(&WatchList);
     setRowCount(WatchList.Count());
+    if(getInitialSelection() >= WatchList.Count() && WatchList.Count() > 0)
+        setSingleSelection(WatchList.Count() - 1);
     for(int i = 0; i < WatchList.Count(); i++)
     {
         setCellContent(i, 0, QString(WatchList[i].WatchName));
@@ -144,7 +147,7 @@ void WatchView::setupContextMenu()
         return getRowCount() != 0;
     };
     mMenu->addAction(makeAction(tr("&Add..."), SLOT(addWatchSlot())));
-    mMenu->addAction(makeAction(tr("&Delete"), SLOT(delWatchSlot())), nonEmptyFunc);
+    mMenu->addAction(makeShortcutAction(tr("&Delete"), SLOT(delWatchSlot()), "ActionDeleteBreakpoint"), nonEmptyFunc);
     mMenu->addAction(makeAction(DIcon("labels.png"), tr("Rename"), SLOT(renameWatchSlot())), nonEmptyFunc);
     mMenu->addAction(makeAction(DIcon("modify.png"), tr("&Edit..."), SLOT(editWatchSlot())), nonEmptyFunc);
     mMenu->addAction(makeAction(DIcon("modify.png"), tr("&Modify..."), SLOT(modifyWatchSlot())), nonEmptyFunc);
@@ -167,7 +170,7 @@ void WatchView::setupContextMenu()
 
 QString WatchView::getSelectedId()
 {
-    return getCellContent(getInitialSelection(), 5);
+    return QChar('.') + getCellContent(getInitialSelection(), 5);
 }
 
 QString WatchView::paintContent(QPainter* painter, dsint rowBase, int rowOffset, int col, int x, int y, int w, int h)
@@ -178,8 +181,8 @@ QString WatchView::paintContent(QPainter* painter, dsint rowBase, int rowOffset,
     {
         painter->fillRect(QRect(x, y, w, h), mWatchTriggeredBackgroundColor);
         painter->setPen(mWatchTriggeredColor); //white text
-        painter->drawText(QRect(x + 4, y , w - 4 , h), Qt::AlignVCenter | Qt::AlignLeft, ret);
-        return "";
+        painter->drawText(QRect(x + 4, y, w - 4, h), Qt::AlignVCenter | Qt::AlignLeft, ret);
+        return QString();
     }
     else
         return ret;

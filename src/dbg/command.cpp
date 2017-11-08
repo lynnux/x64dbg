@@ -109,7 +109,7 @@ bool cmdnew(const char* name, CBCOMMAND cbCommand, bool debugonly)
         cmd = (COMMAND*)emalloc(sizeof(COMMAND), "cmdnew:cmd");
     memset(cmd, 0, sizeof(COMMAND));
     cmd->names = new std::vector<String>;
-    auto split = StringUtils::Split(name, '\1');
+    auto split = StringUtils::Split(name, ',');
     for(const auto & s : split)
     {
         auto trimmed = StringUtils::Trim(s);
@@ -140,7 +140,7 @@ COMMAND* cmdget(const char* cmd)
     strcpy_s(new_cmd, deflen, cmd);
     int len = (int)strlen(new_cmd);
     int start = 0;
-    while(new_cmd[start] != ' ' && start < len)
+    while(start < len && new_cmd[start] != ' ')
         start++;
     new_cmd[start] = 0;
     COMMAND* found = cmdfind(new_cmd, 0);

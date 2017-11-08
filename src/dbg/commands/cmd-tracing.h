@@ -12,3 +12,7 @@ bool cbDebugRunToParty(int argc, char* argv[]);
 bool cbDebugRunToUserCode(int argc, char* argv[]);
 bool cbDebugTraceSetLog(int argc, char* argv[]);
 bool cbDebugTraceSetCommand(int argc, char* argv[]);
+bool cbDebugTraceSetSwitchCondition(int argc, char* argv[]);
+bool cbDebugTraceSetLogFile(int argc, char* argv[]);
+bool cbDebugStartRunTrace(int argc, char* argv[]);
+bool cbDebugStopRunTrace(int argc, char* argv[]);

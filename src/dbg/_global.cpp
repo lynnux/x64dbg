@@ -6,6 +6,8 @@
 #include "_global.h"
 #include <objbase.h>
 #include <shlobj.h>
+#include <psapi.h>
+#include "DeviceNameResolver/DeviceNameResolver.h"
 
 /**
 \brief x64dbg library instance.
@@ -41,7 +43,10 @@ void* emalloc(size_t size, const char* reason)
 #endif //ENABLE_MEM_TRACE
     if(!a)
     {
-        MessageBoxW(0, L"Could not allocate memory", L"Error", MB_ICONERROR);
+        wchar_t size[25];
+        swprintf_s(size, L"%p bytes", size);
+        MessageBoxW(0, L"Could not allocate memory (minidump will be created)", size, MB_ICONERROR);
+        __debugbreak();
         ExitProcess(1);
     }
     emalloc_count++;
@@ -184,36 +189,6 @@ bool scmp(const char* a, const char* b)
 }
 
 /**
-\brief Formats a string to hexadecimal format (removes all non-hex characters).
-\param [in,out] String to format.
-*/
-void formathex(char* string)
-{
-    int len = (int)strlen(string);
-    _strupr(string);
-    Memory<char*> new_string(len + 1, "formathex:new_string");
-    for(int i = 0, j = 0; i < len; i++)
-        if(isxdigit(string[i]))
-            j += sprintf(new_string() + j, "%c", string[i]);
-    strcpy_s(string, len + 1, new_string());
-}
-
-/**
-\brief Formats a string to decimal format (removed all non-numeric characters).
-\param [in,out] String to format.
-*/
-void formatdec(char* string)
-{
-    int len = (int)strlen(string);
-    _strupr(string);
-    Memory<char*> new_string(len + 1, "formatdec:new_string");
-    for(int i = 0, j = 0; i < len; i++)
-        if(isdigit(string[i]))
-            j += sprintf(new_string() + j, "%c", string[i]);
-    strcpy_s(string, len + 1, new_string());
-}
-
-/**
 \brief Queries if a given file exists.
 \param file Path to the file to check (UTF-8).
 \return true if the file exists on the hard drive.
@@ -307,45 +282,6 @@ bool settingboolget(const char* section, const char* name)
 }
 
 /**
-\brief Gets file architecture.
-\param szFileName UTF-8 encoded file path.
-\return The file architecture (::arch).
-*/
-arch GetFileArchitecture(const char* szFileName)
-{
-    arch retval = notfound;
-    Handle hFile = CreateFileW(StringUtils::Utf8ToUtf16(szFileName).c_str(), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
-    if(hFile != INVALID_HANDLE_VALUE)
-    {
-        unsigned char data[0x1000];
-        DWORD read = 0;
-        DWORD fileSize = GetFileSize(hFile, 0);
-        DWORD readSize = sizeof(data);
-        if(readSize > fileSize)
-            readSize = fileSize;
-        if(ReadFile(hFile, data, readSize, &read, 0))
-        {
-            retval = invalid;
-            IMAGE_DOS_HEADER* pdh = (IMAGE_DOS_HEADER*)data;
-            if(pdh->e_magic == IMAGE_DOS_SIGNATURE && (size_t)pdh->e_lfanew < readSize)
-            {
-                IMAGE_NT_HEADERS* pnth = (IMAGE_NT_HEADERS*)(data + pdh->e_lfanew);
-                if(pnth->Signature == IMAGE_NT_SIGNATURE)
-                {
-                    if(pnth->OptionalHeader.DataDirectory[15].VirtualAddress != 0 && pnth->OptionalHeader.DataDirectory[15].Size != 0 && (pnth->FileHeader.Characteristics & IMAGE_FILE_DLL) == 0)
-                        retval = dotnet;
-                    else if(pnth->FileHeader.Machine == IMAGE_FILE_MACHINE_I386) //x32
-                        retval = x32;
-                    else if(pnth->FileHeader.Machine == IMAGE_FILE_MACHINE_AMD64) //x64
-                        retval = x64;
-                }
-            }
-        }
-    }
-    return retval;
-}
-
-/**
 \brief Query if x64dbg is running in Wow64 mode.
 \return true if running in Wow64, false otherwise.
 */
@@ -358,7 +294,8 @@ bool IsWow64()
 }
 
 //Taken from: http://www.cplusplus.com/forum/windows/64088/
-bool ResolveShortcut(HWND hwnd, const wchar_t* szShortcutPath, char* szResolvedPath, size_t nSize)
+//And: https://codereview.stackexchange.com/a/2917
+bool ResolveShortcut(HWND hwnd, const wchar_t* szShortcutPath, wchar_t* szResolvedPath, size_t nSize)
 {
     if(szResolvedPath == NULL)
         return SUCCEEDED(E_INVALIDARG);
@@ -368,8 +305,8 @@ bool ResolveShortcut(HWND hwnd, const wchar_t* szShortcutPath, char* szResolvedP
         return false;
 
     //Get a pointer to the IShellLink interface.
-    IShellLink* psl = NULL;
-    HRESULT hres = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLink, (LPVOID*)&psl);
+    IShellLinkW* psl = NULL;
+    HRESULT hres = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (LPVOID*)&psl);
     if(SUCCEEDED(hres))
     {
         //Get a pointer to the IPersistFile interface.
@@ -388,12 +325,16 @@ bool ResolveShortcut(HWND hwnd, const wchar_t* szShortcutPath, char* szResolvedP
                 if(SUCCEEDED(hres))
                 {
                     //Get the path to the link target.
-                    char szGotPath[MAX_PATH] = {0};
-                    hres = psl->GetPath(szGotPath, _countof(szGotPath), NULL, SLGP_SHORTPATH);
+                    wchar_t linkTarget[MAX_PATH];
+                    hres = psl->GetPath(linkTarget, _countof(linkTarget), NULL, SLGP_RAWPATH);
 
-                    if(SUCCEEDED(hres))
+                    //Expand the environment variables.
+                    wchar_t expandedTarget[MAX_PATH];
+                    auto expandSuccess = !!ExpandEnvironmentStringsW(linkTarget, expandedTarget, _countof(expandedTarget));
+
+                    if(SUCCEEDED(hres) && expandSuccess)
                     {
-                        strcpy_s(szResolvedPath, nSize, szGotPath);
+                        wcscpy_s(szResolvedPath, nSize, expandedTarget);
                     }
                 }
             }

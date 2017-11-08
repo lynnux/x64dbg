@@ -230,13 +230,13 @@ void CPUStack::setupContextMenu()
     //Go to Previous
     gotoMenu->addAction(makeShortcutAction(DIcon("previous.png"), tr("Go to Previous"), SLOT(gotoPreviousSlot()), "ActionGotoPrevious"), [this](QMenu*)
     {
-        return historyHasPrev();
+        return mHistory.historyHasPrev();
     });
 
     //Go to Next
     gotoMenu->addAction(makeShortcutAction(DIcon("next.png"), tr("Go to Next"), SLOT(gotoNextSlot()), "ActionGotoNext"), [this](QMenu*)
     {
-        return historyHasNext();
+        return mHistory.historyHasNext();
     });
 
     mMenuBuilder->addMenu(makeMenu(DIcon("goto.png"), tr("&Go to")), gotoMenu);
@@ -313,6 +313,7 @@ void CPUStack::setupContextMenu()
     mMenuBuilder->addSeparator();
     mMenuBuilder->addBuilder(new MenuBuilder(this, [this](QMenu * menu)
     {
+        DbgMenuPrepare(GUI_STACK_MENU);
         menu->addActions(mPluginMenu->actions());
         return true;
     }));
@@ -432,7 +433,7 @@ QString CPUStack::paintContent(QPainter* painter, dsint rowBase, int rowOffset, 
         }
         if(background.alpha())
             painter->fillRect(QRect(x, y, w, h), QBrush(background)); //fill background when defined
-        painter->drawText(QRect(x + 4, y , w - 4 , h), Qt::AlignVCenter | Qt::AlignLeft, makeAddrText(wVa));
+        painter->drawText(QRect(x + 4, y, w - 4, h), Qt::AlignVCenter | Qt::AlignLeft, makeAddrText(wVa));
         return QString();
     }
     else if(col == 1) // paint stack data
@@ -460,14 +461,15 @@ QString CPUStack::paintContent(QPainter* painter, dsint rowBase, int rowOffset, 
                     return HexDump::paintContent(painter, rowBase, rowOffset, 1, x, y, w, h);
                 else
                 {
-                    if(party == 0)
-                        painter->setPen(QPen(mUserStackFrameColor, 2));
-                    else
-                        painter->setPen(QPen(mSystemStackFrameColor, 2));
                     int height = getRowHeight();
                     int halfHeight = height / 2;
                     int width = 5;
                     int offset = 2;
+                    auto result = HexDump::paintContent(painter, rowBase, rowOffset, 1, x + (width - 2), y, w - (width - 2), h);
+                    if(party == 0)
+                        painter->setPen(QPen(mUserStackFrameColor, 2));
+                    else
+                        painter->setPen(QPen(mSystemStackFrameColor, 2));
                     if((stackFrameBitfield & 1) != 0)
                     {
                         painter->drawLine(x + width, y + halfHeight / 2, x + offset, y + halfHeight / 2);
@@ -482,8 +484,7 @@ QString CPUStack::paintContent(QPainter* painter, dsint rowBase, int rowOffset, 
                     }
                     else
                         painter->drawLine(x + offset, y + height, x + offset, y + halfHeight);
-                    width -= 2;
-                    return HexDump::paintContent(painter, rowBase, rowOffset, 1, x + width, y, w - width, h);
+                    return result;
                 }
             }
             else
@@ -539,7 +540,7 @@ void CPUStack::mouseDoubleClickEvent(QMouseEvent* event)
 void CPUStack::stackDumpAt(duint addr, duint csp)
 {
     if(DbgMemIsValidReadPtr(addr))
-        addVaToHistory(addr);
+        mHistory.addVaToHistory(addr);
     mCsp = csp;
 
     // Get the callstack
@@ -636,7 +637,7 @@ void CPUStack::gotoNextFrameSlot()
 void CPUStack::gotoPreviousFrameSlot()
 {
     int frame = getCurrentFrame(mCallstack, rvaToVa(getInitialSelection()));
-    if(frame != -1 && frame > 0)
+    if(frame > 0)
         DbgCmdExec(QString("sdump \"%1\"").arg(ToPtrString(mCallstack[frame - 1].addr)).toUtf8().constData());
 }
 
@@ -656,16 +657,6 @@ void CPUStack::gotoExpressionSlot()
         duint value = DbgValFromString(mGoto->expressionText.toUtf8().constData());
         DbgCmdExec(QString().sprintf("sdump %p", value).toUtf8().constData());
     }
-}
-
-void CPUStack::gotoPreviousSlot()
-{
-    historyPrev();
-}
-
-void CPUStack::gotoNextSlot()
-{
-    historyNext();
 }
 
 void CPUStack::selectionGet(SELECTIONDATA* selection)

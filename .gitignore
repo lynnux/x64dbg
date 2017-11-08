@@ -52,6 +52,7 @@ help/x64*dbg.chm
 help/output/
 bin/x64*dbg.chm
 bin/win32.*
+bin/x*.unicode.txt
 
 # Debugger files to ignore
 CppCheckResults.xml
@@ -68,7 +69,10 @@ RDb*
 src/build-*/
 
 # Exceptions
-!/hooks/AStyleWhore.exe
+!/hooks/AStyleHelper.exe
 !/hooks/AStyle.dll
 !/bin/x64dbg_shell_remove.reg
 !*.lib
+.scannerwork/
+bw-output/
+build-wrapper*

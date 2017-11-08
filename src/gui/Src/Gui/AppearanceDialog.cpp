@@ -417,14 +417,15 @@ void AppearanceDialog::colorInfoListInit()
     colorInfoListAppend(tr("Disassembly:"), "", "");
     colorInfoListAppend(tr("Background"), "DisassemblyBackgroundColor", "");
     colorInfoListAppend(tr("Selection"), "DisassemblySelectionColor", "");
-    colorInfoListAppend(tr("Bytes"), "DisassemblyBytesColor", "");
-    colorInfoListAppend(tr("Modified Bytes"), "DisassemblyModifiedBytesColor", "");
-    colorInfoListAppend(tr("Restored Bytes"), "DisassemblyRestoredBytesColor", "");
-#ifdef _WIN64
-    colorInfoListAppend(tr("RIP"), "DisassemblyCipColor", "DisassemblyCipBackgroundColor");
-#else //x86
-    colorInfoListAppend(tr("EIP"), "DisassemblyCipColor", "DisassemblyCipBackgroundColor");
-#endif //_WIN64
+    colorInfoListAppend(tr("Bytes"), "DisassemblyBytesColor", "DisassemblyBytesBackgroundColor");
+    colorInfoListAppend(tr("Modified Bytes"), "DisassemblyModifiedBytesColor", "DisassemblyModifiedBytesBackgroundColor");
+    colorInfoListAppend(tr("Restored Bytes"), "DisassemblyRestoredBytesColor", "DisassemblyRestoredBytesBackgroundColor");
+    colorInfoListAppend(tr("0x00 Bytes"), "DisassemblyByte00Color", "DisassemblyByte00BackgroundColor");
+    colorInfoListAppend(tr("0x7F Bytes"), "DisassemblyByte7FColor", "DisassemblyByte7FBackgroundColor");
+    colorInfoListAppend(tr("0xFF Bytes"), "DisassemblyByteFFColor", "DisassemblyByteFFBackgroundColor");
+    colorInfoListAppend(tr("IsPrint Bytes"), "DisassemblyByteIsPrintColor", "DisassemblyByteIsPrintBackgroundColor");
+    colorInfoListAppend(tr("Relocation underline"), "DisassemblyRelocationUnderlineColor", "");
+    colorInfoListAppend(ArchValue(tr("EIP"), tr("RIP")), "DisassemblyCipColor", "DisassemblyCipBackgroundColor");
     colorInfoListAppend(tr("Breakpoints"), "DisassemblyBreakpointColor", "DisassemblyBreakpointBackgroundColor");
     colorInfoListAppend(tr("Hardware Breakpoints"), "DisassemblyHardwareBreakpointColor", "DisassemblyHardwareBreakpointBackgroundColor");
     colorInfoListAppend(tr("Bookmarks"), "DisassemblyBookmarkColor", "DisassemblyBookmarkBackgroundColor");
@@ -463,6 +464,9 @@ void AppearanceDialog::colorInfoListInit()
     colorInfoListAppend(tr("Register Names"), "RegistersLabelColor", "");
     colorInfoListAppend(tr("Argument Register Names"), "RegistersArgumentLabelColor", "");
     colorInfoListAppend(tr("Extra Information"), "RegistersExtraInfoColor", "");
+    colorInfoListAppend(tr("Highlight Read"), "RegistersHighlightReadColor", "");
+    colorInfoListAppend(tr("Highlight Write"), "RegistersHighlightWriteColor", "");
+    colorInfoListAppend(tr("Highlight Read+Write"), "RegistersHighlightReadWriteColor", "");
 
     colorInfoListAppend(tr("Instructions:"), "", "");
     colorInfoListAppend(tr("Text"), "InstructionUncategorizedColor", "InstructionUncategorizedBackgroundColor");
@@ -498,22 +502,29 @@ void AppearanceDialog::colorInfoListInit()
 
     colorInfoListAppend(tr("HexDump:"), "", "");
     colorInfoListAppend(tr("Text"), "HexDumpTextColor", "");
-    colorInfoListAppend(tr("Modified Bytes"), "HexDumpModifiedBytesColor", "");
+    colorInfoListAppend(tr("Modified Bytes"), "HexDumpModifiedBytesColor", "HexDumpModifiedBytesBackgroundColor");
+    colorInfoListAppend(tr("Restored Bytes"), "HexDumpRestoredBytesColor", "HexDumpRestoredBytesBackgroundColor");
+    colorInfoListAppend(tr("0x00 Bytes"), "HexDumpByte00Color", "HexDumpByte00BackgroundColor");
+    colorInfoListAppend(tr("0x7F Bytes"), "HexDumpByte7FColor", "HexDumpByte7FBackgroundColor");
+    colorInfoListAppend(tr("0xFF Bytes"), "HexDumpByteFFColor", "HexDumpByteFFBackgroundColor");
+    colorInfoListAppend(tr("IsPrint Bytes"), "HexDumpByteIsPrintColor", "HexDumpByteIsPrintBackgroundColor");
     colorInfoListAppend(tr("Background"), "HexDumpBackgroundColor", "");
     colorInfoListAppend(tr("Selection"), "HexDumpSelectionColor", "");
     colorInfoListAppend(tr("Addresses"), "HexDumpAddressColor", "HexDumpAddressBackgroundColor");
     colorInfoListAppend(tr("Labels"), "HexDumpLabelColor", "HexDumpLabelBackgroundColor");
+    colorInfoListAppend(tr("User Code Pointer Highlight Color"), "HexDumpUserModuleCodePointerHighlightColor", "");
+    colorInfoListAppend(tr("User Data Pointer Highlight Color"), "HexDumpUserModuleDataPointerHighlightColor", "");
+    colorInfoListAppend(tr("System Code Pointer Highlight Color"), "HexDumpSystemModuleCodePointerHighlightColor", "");
+    colorInfoListAppend(tr("System Data Pointer Highlight Color"), "HexDumpSystemModuleDataPointerHighlightColor", "");
+    colorInfoListAppend(tr("Unknown Code Pointer Highlight Color"), "HexDumpUnknownCodePointerHighlightColor", "");
+    colorInfoListAppend(tr("Unknown Data Pointer Highlight Color"), "HexDumpUnknownDataPointerHighlightColor", "");
 
     colorInfoListAppend(tr("Stack:"), "", "");
     colorInfoListAppend(tr("Text"), "StackTextColor", "");
     colorInfoListAppend(tr("Inactive Text"), "StackInactiveTextColor", "");
     colorInfoListAppend(tr("Background"), "StackBackgroundColor", "");
     colorInfoListAppend(tr("Selection"), "StackSelectionColor", "");
-#ifdef _WIN64
-    colorInfoListAppend(tr("RSP"), "StackCspColor", "StackCspBackgroundColor");
-#else //x86
-    colorInfoListAppend(tr("ESP"), "StackCspColor", "StackCspBackgroundColor");
-#endif //_WIN64
+    colorInfoListAppend(ArchValue(tr("ESP"), tr("RSP")), "StackCspColor", "StackCspBackgroundColor");
     colorInfoListAppend(tr("Addresses"), "StackAddressColor", "StackAddressBackgroundColor");
     colorInfoListAppend(tr("Selected Addresses"), "StackSelectedAddressColor", "StackSelectedAddressBackgroundColor");
     colorInfoListAppend(tr("Labels"), "StackLabelColor", "StackLabelBackgroundColor");
@@ -528,13 +539,17 @@ void AppearanceDialog::colorInfoListInit()
     colorInfoListAppend(tr("Background"), "HexEditBackgroundColor", "");
     colorInfoListAppend(tr("Selection"), "HexEditSelectionColor", "");
 
-    colorInfoListAppend(tr("Graph"), "", "");
+    colorInfoListAppend(tr("Graph:"), "", "");
     colorInfoListAppend(tr("Background"), "GraphBackgroundColor", "");
     colorInfoListAppend(tr("Node"), "GraphNodeColor", "GraphNodeBackgroundColor");
     colorInfoListAppend(tr("Terminal node shadow"), "GraphRetShadowColor", "");
+    colorInfoListAppend(tr("Indirect call shadow"), "GraphIndirectcallShadowColor", "");
     colorInfoListAppend(tr("Unconditional branch line"), "GraphJmpColor", "");
     colorInfoListAppend(tr("True branch line"), "GraphBrtrueColor", "");
     colorInfoListAppend(tr("False branch line"), "GraphBrfalseColor", "");
+    colorInfoListAppend(ArchValue(tr("EIP"), tr("RIP")), "GraphCipColor", "");
+    colorInfoListAppend(tr("Breakpoint"), "GraphBreakpointColor", "");
+    colorInfoListAppend(tr("Disabled Breakpoint"), "GraphDisabledBreakpointColor", "");
 
     colorInfoListAppend(tr("Other:"), "", "");
     colorInfoListAppend(tr("Current Thread"), "ThreadCurrentColor", "ThreadCurrentBackgroundColor");
@@ -545,6 +560,12 @@ void AppearanceDialog::colorInfoListInit()
     colorInfoListAppend(tr("Search Highlight Color"), "SearchListViewHighlightColor", "");
     colorInfoListAppend(tr("Struct primary background"), "StructBackgroundColor", "");
     colorInfoListAppend(tr("Struct secondary background"), "StructAlternateBackgroundColor", "");
+    colorInfoListAppend(tr("Log Link Color") + "*", "LogLinkColor", "LogLinkBackgroundColor");
+    colorInfoListAppend(tr("Breakpoint Summary Parentheses"), "BreakpointSummaryParenColor", "");
+    colorInfoListAppend(tr("Breakpoint Summary Keywords"), "BreakpointSummaryKeywordColor", "");
+    colorInfoListAppend(tr("Breakpoint Summary Strings"), "BreakpointSummaryStringColor", "");
+    colorInfoListAppend(tr("Patch located in relocation region"), "PatchRelocatedByteHighlightColor", "");
+
 
     //dev helper
     const QMap<QString, QColor>* Colors = &Config()->defaultColors;
@@ -703,6 +724,7 @@ void AppearanceDialog::on_fontAbstractTablesStyle_currentIndexChanged(int index)
     QFont font = fontMap->find(id).value();
     font.setBold(false);
     font.setItalic(false);
+    font.setKerning(false);
     if(index == 1 || index == 3)
         font.setBold(true);
     if(index == 2 || index == 3)
@@ -719,6 +741,7 @@ void AppearanceDialog::on_fontAbstractTablesSize_currentIndexChanged(const QStri
     QString id = "AbstractTableView";
     QFont font = fontMap->find(id).value();
     font.setPointSize(arg1.toInt());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -731,6 +754,7 @@ void AppearanceDialog::on_fontDisassembly_currentFontChanged(const QFont & f)
     QString id = "Disassembly";
     QFont font = fontMap->find(id).value();
     font.setFamily(f.family());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -744,6 +768,7 @@ void AppearanceDialog::on_fontDisassemblyStyle_currentIndexChanged(int index)
     QFont font = fontMap->find(id).value();
     font.setBold(false);
     font.setItalic(false);
+    font.setKerning(false);
     if(index == 1 || index == 3)
         font.setBold(true);
     if(index == 2 || index == 3)
@@ -760,6 +785,7 @@ void AppearanceDialog::on_fontDisassemblySize_currentIndexChanged(const QString 
     QString id = "Disassembly";
     QFont font = fontMap->find(id).value();
     font.setPointSize(arg1.toInt());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -772,6 +798,7 @@ void AppearanceDialog::on_fontHexDump_currentFontChanged(const QFont & f)
     QString id = "HexDump";
     QFont font = fontMap->find(id).value();
     font.setFamily(f.family());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -785,6 +812,7 @@ void AppearanceDialog::on_fontHexDumpStyle_currentIndexChanged(int index)
     QFont font = fontMap->find(id).value();
     font.setBold(false);
     font.setItalic(false);
+    font.setKerning(false);
     if(index == 1 || index == 3)
         font.setBold(true);
     if(index == 2 || index == 3)
@@ -801,6 +829,7 @@ void AppearanceDialog::on_fontHexDumpSize_currentIndexChanged(const QString & ar
     QString id = "HexDump";
     QFont font = fontMap->find(id).value();
     font.setPointSize(arg1.toInt());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -813,6 +842,7 @@ void AppearanceDialog::on_fontStack_currentFontChanged(const QFont & f)
     QString id = "Stack";
     QFont font = fontMap->find(id).value();
     font.setFamily(f.family());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -826,6 +856,7 @@ void AppearanceDialog::on_fontStackStyle_currentIndexChanged(int index)
     QFont font = fontMap->find(id).value();
     font.setBold(false);
     font.setItalic(false);
+    font.setKerning(false);
     if(index == 1 || index == 3)
         font.setBold(true);
     if(index == 2 || index == 3)
@@ -842,6 +873,7 @@ void AppearanceDialog::on_fontStackSize_currentIndexChanged(const QString & arg1
     QString id = "Stack";
     QFont font = fontMap->find(id).value();
     font.setPointSize(arg1.toInt());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -854,6 +886,7 @@ void AppearanceDialog::on_fontRegisters_currentFontChanged(const QFont & f)
     QString id = "Registers";
     QFont font = fontMap->find(id).value();
     font.setFamily(f.family());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -867,6 +900,7 @@ void AppearanceDialog::on_fontRegistersStyle_currentIndexChanged(int index)
     QFont font = fontMap->find(id).value();
     font.setBold(false);
     font.setItalic(false);
+    font.setKerning(false);
     if(index == 1 || index == 3)
         font.setBold(true);
     if(index == 2 || index == 3)
@@ -883,6 +917,7 @@ void AppearanceDialog::on_fontRegistersSize_currentIndexChanged(const QString & 
     QString id = "Registers";
     QFont font = fontMap->find(id).value();
     font.setPointSize(arg1.toInt());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -895,6 +930,7 @@ void AppearanceDialog::on_fontHexEdit_currentFontChanged(const QFont & f)
     QString id = "HexEdit";
     QFont font = fontMap->find(id).value();
     font.setFamily(f.family());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -908,6 +944,7 @@ void AppearanceDialog::on_fontHexEditStyle_currentIndexChanged(int index)
     QFont font = fontMap->find(id).value();
     font.setBold(false);
     font.setItalic(false);
+    font.setKerning(false);
     if(index == 1 || index == 3)
         font.setBold(true);
     if(index == 2 || index == 3)
@@ -924,6 +961,7 @@ void AppearanceDialog::on_fontHexEditSize_currentIndexChanged(const QString & ar
     QString id = "HexEdit";
     QFont font = fontMap->find(id).value();
     font.setPointSize(arg1.toInt());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -936,6 +974,7 @@ void AppearanceDialog::on_fontLog_currentFontChanged(const QFont & f)
     QString id = "Log";
     QFont font = fontMap->find(id).value();
     font.setFamily(f.family());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;
@@ -949,6 +988,7 @@ void AppearanceDialog::on_fontLogStyle_currentIndexChanged(int index)
     QFont font = fontMap->find(id).value();
     font.setBold(false);
     font.setItalic(false);
+    font.setKerning(false);
     if(index == 1 || index == 3)
         font.setBold(true);
     if(index == 2 || index == 3)
@@ -965,6 +1005,7 @@ void AppearanceDialog::on_fontLogSize_currentIndexChanged(const QString & arg1)
     QString id = "Log";
     QFont font = fontMap->find(id).value();
     font.setPointSize(arg1.toInt());
+    font.setKerning(false);
     (*fontMap)[id] = font;
     if(isInit)
         return;

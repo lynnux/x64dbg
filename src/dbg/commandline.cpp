@@ -3,8 +3,9 @@
 #include "memory.h"
 #include "debugger.h"
 #include "console.h"
+#include "filehelper.h"
 
-char commandLine[MAX_COMMAND_LINE_SIZE];
+char commandLine[MAX_SETTING_SIZE];
 
 void showcommandlineerror(cmdline_error_t* cmdline_error)
 {
@@ -75,24 +76,17 @@ bool isCmdLineEmpty()
 
 char* getCommandLineArgs()
 {
-    char* commandLineArguments = NULL;
-    char* extensionPtr = strchr(commandLine, '.');
-
-    if(!extensionPtr)
-        return NULL;
-
-    commandLineArguments = strchr(extensionPtr, ' ');
-
-    if(!commandLineArguments)
-        return NULL;
-
-    return (commandLineArguments + 1);
-
+    auto args = *commandLine == '\"' ? strchr(commandLine + 1, '\"') : nullptr;
+    args = strchr(args ? args : commandLine, ' ');
+    return args ? args + 1 : nullptr;
 }
 
-void CmdLineCacheSave(JSON Root)
+void CmdLineCacheSave(JSON Root, const String & cacheFile)
 {
     EXCLUSIVE_ACQUIRE(LockCmdLine);
+
+    // Write the (possibly empty) command line to a cache file
+    FileHelper::WriteAllText(cacheFile, commandLine);
 
     // return if command line is empty
     if(!strlen(commandLine))
@@ -109,7 +103,7 @@ void CmdLineCacheLoad(JSON Root)
     EXCLUSIVE_ACQUIRE(LockCmdLine);
 
     // Clear command line
-    memset(commandLine, 0, MAX_COMMAND_LINE_SIZE);
+    memset(commandLine, 0, sizeof(commandLine));
 
     // Get a handle to the root object -> commandLine
     const JSON jsonCmdLine = json_object_get(Root, "commandLine");
@@ -120,14 +114,14 @@ void CmdLineCacheLoad(JSON Root)
 
     const char* cmdLine = json_string_value(json_object_get(jsonCmdLine, "cmdLine"));
 
-    strcpy_s(commandLine, cmdLine);
+    copyCommandLine(cmdLine);
 
     json_decref(jsonCmdLine);
 }
 
 void copyCommandLine(const char* cmdLine)
 {
-    strcpy_s(commandLine, cmdLine);
+    strncpy_s(commandLine, cmdLine, _TRUNCATE);
 }
 
 bool SetCommandLine()

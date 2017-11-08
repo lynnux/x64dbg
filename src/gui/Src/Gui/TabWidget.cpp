@@ -11,13 +11,14 @@
 MHTabWidget::MHTabWidget(QWidget* parent, bool allowDetach, bool allowDelete) : QTabWidget(parent)
 {
     m_tabBar = new MHTabBar(this, allowDetach, allowDelete);
-    connect(m_tabBar, SIGNAL(OnDetachTab(int, QPoint &)), this, SLOT(DetachTab(int, QPoint &)));
+    connect(m_tabBar, SIGNAL(OnDetachTab(int, const QPoint &)), this, SLOT(DetachTab(int, const QPoint &)));
     connect(m_tabBar, SIGNAL(OnMoveTab(int, int)), this, SLOT(MoveTab(int, int)));
     connect(m_tabBar, SIGNAL(OnDeleteTab(int)), this, SLOT(DeleteTab(int)));
     connect(m_tabBar, SIGNAL(tabMoved(int, int)), this, SLOT(tabMoved(int, int)));
 
     setTabBar(m_tabBar);
     setMovable(true);
+    setStyleSheet("QTabWidget::pane { border: 0px; }");
 
     m_Windows.clear();
 }
@@ -28,7 +29,7 @@ MHTabWidget::MHTabWidget(QWidget* parent, bool allowDetach, bool allowDelete) : 
 MHTabWidget::~MHTabWidget(void)
 {
     disconnect(m_tabBar, SIGNAL(OnMoveTab(int, int)), this, SLOT(MoveTab(int, int)));
-    disconnect(m_tabBar, SIGNAL(OnDetachTab(int, QPoint &)), this, SLOT(DetachTab(int, QPoint &)));
+    disconnect(m_tabBar, SIGNAL(OnDetachTab(int, const QPoint &)), this, SLOT(DetachTab(int, const QPoint &)));
     disconnect(m_tabBar, SIGNAL(OnDeleteTab(int)), this, SLOT(DeleteTab(int)));
     delete m_tabBar;
 }
@@ -70,7 +71,7 @@ void MHTabWidget::AttachTab(QWidget* parent)
     QWidget* tearOffWidget = detachedWidget->centralWidget();
 
     // Reattach the tab
-    int newIndex = addTabEx(tearOffWidget, detachedWidget->windowIcon(), detachedWidget->windowTitle(), detachedWidget->mNativeName);
+    addTabEx(tearOffWidget, detachedWidget->windowIcon(), detachedWidget->windowTitle(), detachedWidget->mNativeName);
 
     // Remove it from the windows list
     for(int i = 0; i < m_Windows.size(); i++)
@@ -81,10 +82,6 @@ void MHTabWidget::AttachTab(QWidget* parent)
         }
     }
 
-    // Make Active
-    if(newIndex != -1)
-        setCurrentIndex(newIndex);
-
     // Cleanup Window
     disconnect(detachedWidget, SIGNAL(OnClose(QWidget*)), this, SLOT(AttachTab(QWidget*)));
     detachedWidget->hide();
@@ -92,7 +89,7 @@ void MHTabWidget::AttachTab(QWidget* parent)
 }
 
 // Convert a tab to an external window
-void MHTabWidget::DetachTab(int index, QPoint & dropPoint)
+void MHTabWidget::DetachTab(int index, const QPoint & dropPoint)
 {
     Q_UNUSED(dropPoint);
     // Create the window
@@ -105,6 +102,7 @@ void MHTabWidget::DetachTab(int index, QPoint & dropPoint)
     detachedWidget->setWindowTitle(tabText(index));
     detachedWidget->setWindowIcon(tabIcon(index));
     detachedWidget->mNativeName = mNativeNames[index];
+    mNativeNames.removeAt(index);
 
     // Remove from tab bar
     QWidget* tearOffWidget = widget(index);
@@ -184,17 +182,17 @@ MHTabBar* MHTabWidget::tabBar() const
 
 QString MHTabWidget::getNativeName(int index)
 {
-    if(index < count())
+    if(index < QTabWidget::count())
     {
         return mNativeNames.at(index);
     }
     else
     {
-        MHDetachedWindow* window = dynamic_cast<MHDetachedWindow*>(widget(index)->parent());
+        MHDetachedWindow* window = dynamic_cast<MHDetachedWindow*>(m_Windows.at(index - QTabWidget::count())->parent());
         if(window)
             return window->mNativeName;
         else
-            return "";
+            return QString();
     }
 }
 

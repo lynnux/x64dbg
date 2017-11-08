@@ -2,6 +2,7 @@
 #define QBEAENGINE_H
 
 #include <QString>
+#include <vector>
 #include "capstone_gui.h"
 
 class EncodeMap;
@@ -29,10 +30,10 @@ struct Instruction_t
     QByteArray dump;
     duint rva;
     int length;
-    //DISASM disasm;
     duint branchDestination;
     BranchType branchType;
     CapstoneTokenizer::InstructionToken tokens;
+    std::vector<std::pair<const char*, uint8_t>> regsReferenced;
 };
 
 class QBeaEngine
@@ -66,6 +67,8 @@ private:
     bool _bLongDataInst;
     EncodeMap* mEncodeMap;
     CodeFoldingHelper* mCodeFoldingManager;
+    uint8_t reginfo[ZYDIS_REGISTER_MAX_VALUE + 1];
+    uint8_t flaginfo[ZYDIS_CPUFLAG_MAX_VALUE + 1];
 };
 
 #endif // QBEAENGINE_H

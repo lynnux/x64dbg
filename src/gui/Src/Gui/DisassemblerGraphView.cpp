@@ -5,6 +5,7 @@
 #include "GotoDialog.h"
 #include "XrefBrowseDialog.h"
 #include "LineEditDialog.h"
+#include "SnowmanView.h"
 #include <vector>
 #include <QPainter>
 #include <QScrollBar>
@@ -13,6 +14,7 @@
 #include <QMimeData>
 #include <QFileDialog>
 #include <QMessageBox>
+#include "BreakpointMenu.h"
 
 DisassemblerGraphView::DisassemblerGraphView(QWidget* parent)
     : QAbstractScrollArea(parent),
@@ -22,7 +24,10 @@ DisassemblerGraphView::DisassemblerGraphView(QWidget* parent)
       mCip(0),
       mGoto(nullptr),
       syncOrigin(false),
-      forceCenter(false)
+      forceCenter(false),
+      layoutType(LayoutType::Medium),
+      mHistoryLock(false),
+      mXrefDlg(nullptr)
 {
     this->status = "Loading...";
 
@@ -37,6 +42,7 @@ DisassemblerGraphView::DisassemblerGraphView(QWidget* parent)
     this->scroll_base_y = 0;
     this->scroll_mode = false;
     this->drawOverview = false;
+    this->onlySummary = false;
     this->blocks.clear();
     this->saveGraph = false;
 
@@ -135,7 +141,6 @@ duint DisassemblerGraphView::get_cursor_pos()
 
 void DisassemblerGraphView::set_cursor_pos(duint addr)
 {
-    Q_UNUSED(addr);
     if(!this->navigate(addr))
     {
         //TODO: show in hex editor?
@@ -173,15 +178,25 @@ void DisassemblerGraphView::paintNormal(QPainter & p, QRect & viewportRect, int 
     for(auto & blockIt : this->blocks)
     {
         DisassemblerBlock & block = blockIt.second;
+        bool blockSelected = false;
+        for(const Instr & instr : block.block.instrs)
+        {
+            if(instr.addr == this->cur_instr)
+            {
+                blockSelected = true;
+            }
+        }
 
         //Ignore blocks that are not in view
-        if(viewportRect.intersects(QRect(block.x + this->charWidth , block.y + this->charWidth,
+        if(viewportRect.intersects(QRect(block.x + this->charWidth, block.y + this->charWidth,
                                          block.width - (2 * this->charWidth), block.height - (2 * this->charWidth))))
         {
             //Render shadow
             p.setPen(QColor(0, 0, 0, 0));
             if(block.block.terminal)
                 p.setBrush(retShadowColor);
+            else if(block.block.indirectcall)
+                p.setBrush(indirectcallShadowColor);
             else
                 p.setBrush(QColor(0, 0, 0, 128));
             p.drawRect(block.x + this->charWidth + 4, block.y + this->charWidth + 4,
@@ -189,7 +204,7 @@ void DisassemblerGraphView::paintNormal(QPainter & p, QRect & viewportRect, int 
 
             //Render node background
             p.setPen(graphNodeColor);
-            p.setBrush(QBrush(disassemblyBackgroundColor));
+            p.setBrush(disassemblyBackgroundColor);
             p.drawRect(block.x + this->charWidth, block.y + this->charWidth,
                        block.width - (4 + 2 * this->charWidth), block.height - (4 + 2 * this->charWidth));
 
@@ -200,8 +215,9 @@ void DisassemblerGraphView::paintNormal(QPainter & p, QRect & viewportRect, int 
                 for(Instr & instr : block.block.instrs)
                 {
                     auto selected = instr.addr == this->cur_instr;
-                    auto traced = dbgfunctions->GetTraceRecordHitCount(instr.addr) != 0;
-                    if(selected && traced)
+                    auto traceCount = dbgfunctions->GetTraceRecordHitCount(instr.addr);
+
+                    if(selected && traceCount)
                     {
                         p.fillRect(QRect(block.x + this->charWidth + 3, y, block.width - (10 + 2 * this->charWidth),
                                          int(instr.text.lines.size()) * this->charHeight), disassemblyTracedSelectionColor);
@@ -211,10 +227,22 @@ void DisassemblerGraphView::paintNormal(QPainter & p, QRect & viewportRect, int 
                         p.fillRect(QRect(block.x + this->charWidth + 3, y, block.width - (10 + 2 * this->charWidth),
                                          int(instr.text.lines.size()) * this->charHeight), disassemblySelectionColor);
                     }
-                    else if(traced)
+                    else if(traceCount)
                     {
-                        p.fillRect(QRect(block.x + this->charWidth + 3, y, block.width - (10 + 2 * this->charWidth),
-                                         int(instr.text.lines.size()) * this->charHeight), disassemblyTracedColor);
+                        // Color depending on how often a sequence of code is executed
+                        int exponent = 1;
+                        while(traceCount >>= 1) //log2(traceCount)
+                            exponent++;
+                        int colorDiff = (exponent * exponent) / 2;
+
+                        // If the user has a light trace background color, substract
+                        if(disassemblyTracedColor.blue() > 160)
+                            colorDiff *= -1;
+
+                        p.fillRect(QRect(block.x + this->charWidth + 3, y, block.width - (10 + 2 * this->charWidth), int(instr.text.lines.size()) * this->charHeight),
+                                   QColor(disassemblyTracedColor.red(),
+                                          disassemblyTracedColor.green(),
+                                          std::max(0, std::min(256, disassemblyTracedColor.blue() + colorDiff))));
                     }
                     y += int(instr.text.lines.size()) * this->charHeight;
                 }
@@ -233,12 +261,34 @@ void DisassemblerGraphView::paintNormal(QPainter & p, QRect & viewportRect, int 
             {
                 for(auto & line : instr.text.lines)
                 {
-                    if(instr.addr == mCip)
+                    int rectSize = qRound(this->charWidth);
+                    if(rectSize % 2)
+                        rectSize++;
+
+                    // Assume charWidth <= charHeight
+                    QRectF bpRect(x - rectSize / 3.0, y + (this->charHeight - rectSize) / 2.0, rectSize, rectSize);
+
+                    bool isbp = DbgGetBpxTypeAt(instr.addr) != bp_none;
+                    bool isbpdisabled = DbgIsBpDisabled(instr.addr);
+                    bool iscip = instr.addr == mCip;
+
+                    if(isbp || isbpdisabled)
                     {
-                        p.setPen(mCipColor);
-                        p.fillRect(x, y, this->charWidth, this->charHeight, mCipBackgroundColor);
-                        p.drawText(x, y, this->charWidth, this->charHeight, 0, QString("\xE2\x80\xA2"));
+                        if(iscip)
+                        {
+                            // Left half is cip
+                            bpRect.setWidth(bpRect.width() / 2);
+                            p.fillRect(bpRect, mCipColor);
+
+                            // Right half is breakpoint
+                            bpRect.translate(bpRect.width(), 0);
+                        }
+
+                        p.fillRect(bpRect, isbp ? mBreakpointColor : mDisabledBreakpointColor);
                     }
+                    else if(iscip)
+                        p.fillRect(bpRect, mCipColor);
+
                     RichTextPainter::paintRichText(&p, x + this->charWidth, y, block.width - this->charWidth, this->charHeight, 0, line, mFontMetrics);
                     y += this->charHeight;
                 }
@@ -248,9 +298,14 @@ void DisassemblerGraphView::paintNormal(QPainter & p, QRect & viewportRect, int 
         // Render edges
         for(DisassemblerEdge & edge : block.edges)
         {
-            p.setPen(edge.color);
+            QPen pen(edge.color);
+            if(blockSelected)
+                pen.setStyle(Qt::DashLine);
+            p.setPen(pen);
             p.setBrush(edge.color);
             p.drawPolyline(edge.polyline);
+            pen.setStyle(Qt::SolidLine);
+            p.setPen(pen);
             p.drawConvexPolygon(edge.arrow);
         }
     }
@@ -259,6 +314,7 @@ void DisassemblerGraphView::paintNormal(QPainter & p, QRect & viewportRect, int 
 void DisassemblerGraphView::paintOverview(QPainter & p, QRect & viewportRect, int xofs, int yofs)
 {
     // Scale and translate painter
+    auto dbgfunctions = DbgFunctions();
     qreal sx = qreal(viewportRect.width()) / qreal(this->renderWidth);
     qreal sy = qreal(viewportRect.height()) / qreal(this->renderHeight);
     qreal s = qMin(sx, sy);
@@ -306,14 +362,16 @@ void DisassemblerGraphView::paintOverview(QPainter & p, QRect & viewportRect, in
         }
 
         //Get block metadata
-        auto isTraced = DbgFunctions()->GetTraceRecordHitCount(block.block.entry) != 0;
+        auto traceCount = dbgfunctions->GetTraceRecordHitCount(block.block.entry);
         auto isCip = block.block.entry == cipBlock;
 
         //Render shadow
         p.setPen(QColor(0, 0, 0, 0));
-        if(isTraced && block.block.terminal)
+        if((isCip || traceCount) && block.block.terminal)
             p.setBrush(retShadowColor);
-        else if(block.block.terminal || isCip)
+        else if((isCip || traceCount) && block.block.indirectcall)
+            p.setBrush(indirectcallShadowColor);
+        else if(isCip)
             p.setBrush(QColor(0, 0, 0, 0));
         else
             p.setBrush(QColor(0, 0, 0, 128));
@@ -324,13 +382,29 @@ void DisassemblerGraphView::paintOverview(QPainter & p, QRect & viewportRect, in
         pen.setColor(graphNodeColor);
         p.setPen(pen);
         if(isCip)
-            p.setBrush(QBrush(mCipBackgroundColor));
-        else if(isTraced)
-            p.setBrush(QBrush(disassemblyTracedColor));
+            p.setBrush(mCipColor);
+        else if(traceCount)
+        {
+            // Color depending on how often a sequence of code is executed
+            int exponent = 1;
+            while(traceCount >>= 1) //log2(traceCount)
+                exponent++;
+            int colorDiff = (exponent * exponent) / 2;
+
+            // If the user has a light trace background color, substract
+            if(disassemblyTracedColor.blue() > 160)
+                colorDiff *= -1;
+
+            p.setBrush(QColor(disassemblyTracedColor.red(),
+                              disassemblyTracedColor.green(),
+                              std::max(0, std::min(256, disassemblyTracedColor.blue() + colorDiff))));
+        }
         else if(block.block.terminal)
-            p.setBrush(QBrush(retShadowColor));
+            p.setBrush(retShadowColor);
+        else if(block.block.indirectcall)
+            p.setBrush(indirectcallShadowColor);
         else
-            p.setBrush(QBrush(disassemblyBackgroundColor));
+            p.setBrush(disassemblyBackgroundColor);
         p.drawRect(block.x + this->charWidth, block.y + this->charWidth,
                    block.width - (4 + 2 * this->charWidth), block.height - (4 + 2 * this->charWidth));
     }
@@ -357,7 +431,7 @@ void DisassemblerGraphView::paintEvent(QPaintEvent* event)
 
     //Render background
     QRect viewportRect(this->viewport()->rect().topLeft(), this->viewport()->rect().bottomRight() - QPoint(1, 1));
-    p.setBrush(QBrush(backgroundColor));
+    p.setBrush(backgroundColor);
     p.drawRect(viewportRect);
     p.setBrush(Qt::black);
 
@@ -376,13 +450,22 @@ void DisassemblerGraphView::paintEvent(QPaintEvent* event)
     if(saveGraph)
     {
         saveGraph = false;
-        QString path = QFileDialog::getSaveFileName(this, tr("Save as image"), "", tr("PNG file (*.png);;JPG file (*.jpg)"));
+        QString path = QFileDialog::getSaveFileName(this, tr("Save as image"), "", tr("PNG file (*.png);;BMP file (*.bmp)"));
         if(path.isEmpty())
             return;
-        QImage img(this->viewport()->rect().size(), QImage::Format_ARGB32);
+
+        // expand to full render Rectangle
+        this->viewport()->resize(this->renderWidth, this->renderHeight);//OK
+
+        //save viewport to image
+        QRect completeRenderRect = QRect(0, 0, this->renderWidth, this->renderHeight);
+        QImage img(completeRenderRect.size(), QImage::Format_ARGB32);
         QPainter painter(&img);
         this->viewport()->render(&painter);
         img.save(path);
+
+        //restore changes made to viewport for full render saving
+        this->viewport()->resize(this->viewport()->width(), this->viewport()->height());
     }
 }
 
@@ -526,6 +609,8 @@ bool DisassemblerGraphView::find_instr(duint addr, Instr & instrOut)
 
 void DisassemblerGraphView::mousePressEvent(QMouseEvent* event)
 {
+    if(!DbgIsDebugging())
+        return;
     if(drawOverview)
     {
         if(event->button() == Qt::LeftButton)
@@ -548,7 +633,7 @@ void DisassemblerGraphView::mousePressEvent(QMouseEvent* event)
             wMenu.exec(event->globalPos()); //execute context menu
         }
     }
-    else if(this->isMouseEventInBlock(event))
+    else if((event->button() == Qt::LeftButton || event->button() == Qt::RightButton) && this->isMouseEventInBlock(event))
     {
         //Check for click on a token and highlight it
         Token token;
@@ -610,6 +695,11 @@ void DisassemblerGraphView::mouseMoveEvent(QMouseEvent* event)
 
 void DisassemblerGraphView::mouseReleaseEvent(QMouseEvent* event)
 {
+    if(event->button() == Qt::ForwardButton)
+        gotoNextSlot();
+    else if(event->button() == Qt::BackButton)
+        gotoPreviousSlot();
+
     if(event->button() != Qt::LeftButton)
         return;
 
@@ -623,8 +713,20 @@ void DisassemblerGraphView::mouseReleaseEvent(QMouseEvent* event)
 
 void DisassemblerGraphView::mouseDoubleClickEvent(QMouseEvent* event)
 {
-    duint instr = this->getInstrForMouseEvent(event);
-    DbgCmdExec(QString("graph dis.branchdest(%1), silent").arg(ToPtrString(instr)).toUtf8().constData());
+    if(drawOverview)
+    {
+        toggleOverviewSlot();
+    }
+    else
+    {
+        duint instr = this->getInstrForMouseEvent(event);
+
+        //Add address to history
+        if(!mHistoryLock)
+            mHistory.addVaToHistory(instr);
+
+        DbgCmdExec(QString("graph dis.branchdest(%1), silent").arg(ToPtrString(instr)).toUtf8().constData());
+    }
 }
 
 void DisassemblerGraphView::prepareGraphNode(DisassemblerBlock & block)
@@ -670,30 +772,70 @@ void DisassemblerGraphView::computeGraphLayout(DisassemblerBlock & block)
     //Compute child node layouts and arrange them horizontally
     int col = 0;
     int row_count = 1;
+    int childColumn = 0;
+    bool singleChild = block.new_exits.size() == 1;
     for(size_t i = 0; i < block.new_exits.size(); i++)
     {
-        duint edge = block.new_exits[block.new_exits.size() - i - 1];
+        duint edge = block.new_exits[i];
         this->computeGraphLayout(this->blocks[edge]);
-        this->adjustGraphLayout(this->blocks[edge], col, 1);
-        col += this->blocks[edge].col_count;
         if((this->blocks[edge].row_count + 1) > row_count)
             row_count = this->blocks[edge].row_count + 1;
+        childColumn = this->blocks[edge].col;
     }
 
-    block.row = 0;
-    if(col >= 2)
+    if(this->layoutType != LayoutType::Wide && block.new_exits.size() == 2)
     {
-        //Place this node centered over the child nodes
-        block.col = (col - 2) / 2;
-        block.col_count = col;
+        DisassemblerBlock & left = this->blocks[block.new_exits[0]];
+        DisassemblerBlock & right = this->blocks[block.new_exits[1]];
+        if(left.new_exits.size() == 0)
+        {
+            left.col = right.col - 2;
+            int add = left.col < 0 ? - left.col : 0;
+            this->adjustGraphLayout(right, add, 1);
+            this->adjustGraphLayout(left, add, 1);
+            col = right.col_count + add;
+        }
+        else if(right.new_exits.size() == 0)
+        {
+            this->adjustGraphLayout(left, 0, 1);
+            this->adjustGraphLayout(right, left.col + 2, 1);
+            col = std::max(left.col_count, right.col + 2);
+        }
+        else
+        {
+            this->adjustGraphLayout(left, 0, 1);
+            this->adjustGraphLayout(right, left.col_count, 1);
+            col = left.col_count + right.col_count;
+        }
+
+        block.col_count = std::max(2, col);
+        if(layoutType == LayoutType::Medium)
+            block.col = (left.col + right.col) / 2;
+        else
+            block.col = singleChild ? childColumn : (col - 2) / 2;
     }
     else
     {
-        //No child nodes, set single node's width (nodes are 2 columns wide to allow
-        //centering over a branch)
-        block.col = 0;
-        block.col_count = 2;
+        for(duint edge : block.new_exits)
+        {
+            this->adjustGraphLayout(this->blocks[edge], col, 1);
+            col += this->blocks[edge].col_count;
+        }
+        if(col >= 2)
+        {
+            //Place this node centered over the child nodes
+            block.col = singleChild ? childColumn : (col - 2) / 2;
+            block.col_count = col;
+        }
+        else
+        {
+            //No child nodes, set single node's width (nodes are 2 columns wide to allow
+            //centering over a branch)
+            block.col = 0;
+            block.col_count = 2;
+        }
     }
+    block.row = 0;
     block.row_count = row_count;
 }
 
@@ -704,11 +846,11 @@ bool DisassemblerGraphView::isEdgeMarked(EdgesVector & edges, int row, int col, 
     return edges[row][col][index];
 }
 
-void DisassemblerGraphView::markEdge(EdgesVector & edges, int row, int col, int index)
+void DisassemblerGraphView::markEdge(EdgesVector & edges, int row, int col, int index, bool used)
 {
     while(int(edges[row][col].size()) <= index)
         edges[row][col].push_back(false);
-    edges[row][col][index] = true;
+    edges[row][col][index] = used;
 }
 
 int DisassemblerGraphView::findHorizEdgeIndex(EdgesVector & edges, int row, int min_col, int max_col)
@@ -793,42 +935,46 @@ DisassemblerGraphView::DisassemblerEdge DisassemblerGraphView::routeEdge(EdgesVe
     int col = start.col + 1;
     if(min_row != max_row)
     {
-        int ofs = 0;
-        while(true)
+        auto checkColumn = [min_row, max_row, &edge_valid](int column)
         {
-            col = start.col + 1 - ofs;
-            if(col >= 0)
+            if(column < 0 || column >= int(edge_valid[min_row].size()))
+                return false;
+            for(int row = min_row; row < max_row; row++)
             {
-                bool valid = true;
-                for(int row = min_row; row < max_row + 1; row++)
+                if(!edge_valid[row][column])
                 {
-                    if(!edge_valid[row][col])
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        if(!checkColumn(col))
+        {
+            if(checkColumn(end.col + 1))
+            {
+                col = end.col + 1;
+            }
+            else
+            {
+                int ofs = 0;
+                while(true)
+                {
+                    col = start.col + 1 - ofs;
+                    if(checkColumn(col))
                     {
-                        valid = false;
                         break;
                     }
-                }
-                if(valid)
-                    break;
-            }
 
-            col = start.col + 1 + ofs;
-            if(col < int(edge_valid[min_row].size()))
-            {
-                bool valid = true;
-                for(int row = min_row; row < max_row + 1; row++)
-                {
-                    if(!edge_valid[row][col])
+                    col = start.col + 1 + ofs;
+                    if(checkColumn(col))
                     {
-                        valid = false;
                         break;
                     }
-                }
-                if(valid)
-                    break;
-            }
 
-            ofs += 1;
+                    ofs += 1;
+                }
+            }
         }
     }
 
@@ -854,7 +1000,11 @@ DisassemblerGraphView::DisassemblerEdge DisassemblerGraphView::routeEdge(EdgesVe
     if(end.row != (start.row + 1))
     {
         //Not in same row, need to generate a line for moving to the correct row
+        if(col == (start.col + 1))
+            this->markEdge(vert_edges, start.row + 1, start.col + 1, i, false);
         int index = this->findVertEdgeIndex(vert_edges, col, min_row, max_row);
+        if(col == (start.col + 1))
+            edge.start_index = index;
         edge.addPoint(end.row, col, index);
         horiz = false;
     }
@@ -929,10 +1079,9 @@ void DisassemblerGraphView::renderFunction(Function & func)
     visited.insert(func.entry);
     std::queue<duint> queue;
     queue.push(this->blocks[func.entry].block.entry);
+    std::vector<duint> blockOrder;
     bool changed = true;
 
-    int best_edges;
-    duint best_parent;
     while(changed)
     {
         changed = false;
@@ -942,6 +1091,7 @@ void DisassemblerGraphView::renderFunction(Function & func)
         {
             DisassemblerBlock & block = this->blocks[queue.front()];
             queue.pop();
+            blockOrder.push_back(block.block.entry);
 
             for(duint edge : block.block.exits)
             {
@@ -957,11 +1107,17 @@ void DisassemblerGraphView::renderFunction(Function & func)
                     visited.insert(edge);
                     changed = true;
                 }
+                else
+                {
+                    removeFromVec(this->blocks[edge].incoming, block.block.entry);
+                }
             }
         }
 
         //No more nodes satisfy constraints, pick a node to continue constructing the graph
         duint best = 0;
+        int best_edges;
+        duint best_parent;
         for(auto & blockIt : this->blocks)
         {
             DisassemblerBlock & block = blockIt.second;
@@ -987,6 +1143,7 @@ void DisassemblerGraphView::renderFunction(Function & func)
             removeFromVec(this->blocks[best].incoming, best_parentb.block.entry);
             best_parentb.new_exits.push_back(best);
             visited.insert(best);
+            queue.push(best);
             changed = true;
         }
     }
@@ -1068,9 +1225,9 @@ void DisassemblerGraphView::renderFunction(Function & func)
     //puts("Prepare edge routing");
 
     //Perform edge routing
-    for(auto & blockIt : this->blocks)
+    for(duint blockId : blockOrder)
     {
-        DisassemblerBlock & block = blockIt.second;
+        DisassemblerBlock & block = blocks[blockId];
         DisassemblerBlock & start = block;
         for(duint edge : block.block.exits)
         {
@@ -1282,7 +1439,7 @@ void DisassemblerGraphView::show_cur_instr(bool force)
                 QRect viewportRect = this->viewport()->rect();
                 QPoint translation(this->renderXOfs - xofs, this->renderYOfs - yofs);
                 viewportRect.translate(-translation.x(), -translation.y());
-                if(force || !viewportRect.contains(QRect(block.x + this->charWidth , block.y + this->charWidth,
+                if(force || !viewportRect.contains(QRect(block.x + this->charWidth, block.y + this->charWidth,
                                                    block.width - (2 * this->charWidth), block.height - (2 * this->charWidth))))
                 {
                     auto x = block.x + int(block.width / 2);
@@ -1301,10 +1458,15 @@ void DisassemblerGraphView::show_cur_instr(bool force)
 
 bool DisassemblerGraphView::navigate(duint addr)
 {
+    //Add address to history
+    if(!mHistoryLock)
+        mHistory.addVaToHistory(addr);
     //Check to see if address is within current function
     for(auto & blockIt : this->blocks)
     {
         DisassemblerBlock & block = blockIt.second;
+        if(block.block.entry > addr) //optimize it
+            continue;
         auto row = int(block.block.header_text.lines.size());
         for(Instr & instr : block.block.instrs)
         {
@@ -1346,6 +1508,15 @@ void DisassemblerGraphView::fontChanged()
     }
 }
 
+void DisassemblerGraphView::setGraphLayout(DisassemblerGraphView::LayoutType layout)
+{
+    this->layoutType = layout;
+    if(this->ready)
+    {
+        this->renderFunction(this->analysis.functions[this->function]);
+    }
+}
+
 void DisassemblerGraphView::tokenizerConfigUpdatedSlot()
 {
     disasm.UpdateConfig();
@@ -1354,6 +1525,7 @@ void DisassemblerGraphView::tokenizerConfigUpdatedSlot()
 
 void DisassemblerGraphView::loadCurrentGraph()
 {
+    bool showGraphRva = ConfigBool("Gui", "ShowGraphRva");
     Analysis anal;
     anal.update_id = this->update_id + 1;
     anal.entry = currentGraph.entryPoint;
@@ -1373,6 +1545,7 @@ void DisassemblerGraphView::loadCurrentGraph()
                 block.false_path = node.brfalse;
                 block.true_path = node.brtrue;
                 block.terminal = node.terminal;
+                block.indirectcall = node.indirectcall;
                 block.header_text = Text(getSymbolicName(block.entry), mLabelColor, mLabelBackgroundColor);
                 {
                     Instr instr;
@@ -1383,6 +1556,19 @@ void DisassemblerGraphView::loadCurrentGraph()
                         Instruction_t instrTok = disasm.DisassembleAt((byte_t*)nodeInstr.data, sizeof(nodeInstr.data), 0, addr, false);
                         RichTextPainter::List richText;
                         CapstoneTokenizer::TokenToRichText(instrTok.tokens, richText, 0);
+
+                        // add rva to node instruction text
+                        if(showGraphRva)
+                        {
+                            RichTextPainter::CustomRichText_t rvaText;
+                            rvaText.highlight = false;
+                            rvaText.textColor = mAddressColor;
+                            rvaText.textBackground = mAddressBackgroundColor;
+                            rvaText.text = QString().number(instrTok.rva, 16).toUpper().trimmed() + "  ";
+                            rvaText.flags = rvaText.textBackground.alpha() ? RichTextPainter::FlagAll : RichTextPainter::FlagColor;
+                            richText.insert(richText.begin(), rvaText);
+                        }
+
                         auto size = instrTok.length;
                         instr.addr = addr;
                         instr.opcode.resize(size);
@@ -1427,7 +1613,13 @@ void DisassemblerGraphView::loadCurrentGraph()
                         }
                         instr.text = Text(richText);
 
-                        block.instrs.push_back(instr);
+                        //The summary contains calls, rets, user comments and string references
+                        if(!onlySummary ||
+                                instrTok.branchType == Instruction_t::Call ||
+                                instrTok.instStr.startsWith("ret", Qt::CaseInsensitive) ||
+                                (!commentText.text.isEmpty() && !autoComment) ||
+                                commentText.text.contains('\"'))
+                            block.instrs.push_back(instr);
                     }
                 }
                 func.blocks.push_back(block);
@@ -1441,12 +1633,24 @@ void DisassemblerGraphView::loadCurrentGraph()
 
 void DisassemblerGraphView::loadGraphSlot(BridgeCFGraphList* graphList, duint addr)
 {
+    auto nodeCount = graphList->nodes.count;
+    if(nodeCount > 5000) //TODO: add configuration
+    {
+        auto title = tr("Large number of nodes");
+        auto message = tr("The graph you are trying to render has a large number of nodes (%1). This can cause x64dbg to hang or crash. It is recommended to save your data before you continue.\n\nDo you want to continue rendering this graph?").arg(nodeCount);
+        if(QMessageBox::question(this, title, message, QMessageBox::Yes, QMessageBox::No | QMessageBox::Default) == QMessageBox::No)
+        {
+            Bridge::getBridge()->setResult(0);
+            return;
+        }
+    }
+
     currentGraph = BridgeCFGraph(graphList, true);
     currentBlockMap.clear();
     this->cur_instr = addr ? addr : this->function;
     this->forceCenter = true;
     loadCurrentGraph();
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(1);
 }
 
 void DisassemblerGraphView::graphAtSlot(duint addr)
@@ -1457,6 +1661,15 @@ void DisassemblerGraphView::graphAtSlot(duint addr)
 void DisassemblerGraphView::updateGraphSlot()
 {
     this->viewport()->update();
+}
+
+void DisassemblerGraphView::addReferenceAction(QMenu* menu, duint addr)
+{
+    QAction* action = new QAction(menu);
+    action->setData(ToPtrString(addr));
+    action->setText(getSymbolicName(addr));
+    connect(action, SIGNAL(triggered()), this, SLOT(followActionSlot()));
+    menu->addAction(action);
 }
 
 void DisassemblerGraphView::setupContextMenu()
@@ -1472,19 +1685,87 @@ void DisassemblerGraphView::setupContextMenu()
     });
     mMenuBuilder->addSeparator();
 
-    mMenuBuilder->addAction(mToggleOverview = makeShortcutAction(DIcon("comment.png"), tr("&Comment"), SLOT(setCommentSlot()), "ActionSetComment"));
-    mMenuBuilder->addAction(mToggleOverview = makeShortcutAction(DIcon("label.png"), tr("&Label"), SLOT(setLabelSlot()), "ActionSetLabel"));
+    auto breakpointMenu = new BreakpointMenu(this, getActionHelperFuncs(), [this]()
+    {
+        return cur_instr;
+    });
+    breakpointMenu->build(mMenuBuilder);
+    mMenuBuilder->addAction(makeShortcutAction(DIcon("comment.png"), tr("&Comment"), SLOT(setCommentSlot()), "ActionSetComment"));
+    mMenuBuilder->addAction(makeShortcutAction(DIcon("label.png"), tr("&Label"), SLOT(setLabelSlot()), "ActionSetLabel"));
     MenuBuilder* gotoMenu = new MenuBuilder(this);
     gotoMenu->addAction(makeShortcutAction(DIcon("geolocation-goto.png"), tr("Expression"), SLOT(gotoExpressionSlot()), "ActionGotoExpression"));
     gotoMenu->addAction(makeShortcutAction(DIcon("cbp.png"), tr("Origin"), SLOT(gotoOriginSlot()), "ActionGotoOrigin"));
+    gotoMenu->addAction(makeShortcutAction(DIcon("previous.png"), tr("Previous"), SLOT(gotoPreviousSlot()), "ActionGotoPrevious"), [this](QMenu*)
+    {
+        return mHistory.historyHasPrev();
+    });
+    gotoMenu->addAction(makeShortcutAction(DIcon("next.png"), tr("Next"), SLOT(gotoNextSlot()), "ActionGotoNext"), [this](QMenu*)
+    {
+        return mHistory.historyHasNext();
+    });
+    MenuBuilder* childrenAndParentMenu = new MenuBuilder(this, [this](QMenu * menu)
+    {
+        duint cursorpos = get_cursor_pos();
+        const DisassemblerBlock* currentBlock = nullptr;
+        const Instr* currentInstruction = nullptr;
+        for(const auto & i : blocks)
+        {
+            if(i.second.block.entry > cursorpos)
+                continue;
+            for(const Instr & inst : i.second.block.instrs)
+            {
+                if(inst.addr <= cursorpos && inst.addr + inst.opcode.size() > cursorpos)
+                {
+                    currentBlock = &i.second;
+                    currentInstruction = &inst;
+                    break;
+                }
+            }
+            if(currentInstruction)
+                break;
+        }
+        if(currentInstruction)
+        {
+            for(const duint & i : currentBlock->incoming) // This list is incomplete
+                addReferenceAction(menu, i);
+            if(!currentBlock->block.terminal)
+            {
+                menu->addSeparator();
+                for(const duint & i : currentBlock->block.exits)
+                    addReferenceAction(menu, i);
+            }
+            //to do: follow a constant
+            return true;
+        }
+        return false;
+    });
+    gotoMenu->addSeparator();
+    gotoMenu->addBuilder(childrenAndParentMenu);
     mMenuBuilder->addMenu(makeMenu(DIcon("goto.png"), tr("Go to")), gotoMenu);
     mMenuBuilder->addAction(makeShortcutAction(DIcon("xrefs.png"), tr("Xrefs..."), SLOT(xrefSlot()), "ActionXrefs"));
+    mMenuBuilder->addAction(makeShortcutAction(DIcon("snowman.png"), tr("Decompile"), SLOT(decompileSlot()), "ActionGraphDecompile"));
     mMenuBuilder->addSeparator();
     mMenuBuilder->addAction(mToggleOverview = makeShortcutAction(DIcon("graph.png"), tr("&Overview"), SLOT(toggleOverviewSlot()), "ActionGraphToggleOverview"));
+    mToggleOverview->setCheckable(true);
+    mMenuBuilder->addAction(mToggleSummary = makeShortcutAction(DIcon("summary.png"), tr("S&ummary"), SLOT(toggleSummarySlot()), "ActionGraphToggleSummary"));
+    mToggleSummary->setCheckable(true);
     mMenuBuilder->addAction(mToggleSyncOrigin = makeShortcutAction(DIcon("lock.png"), tr("&Sync with origin"), SLOT(toggleSyncOriginSlot()), "ActionGraphSyncOrigin"));
     mMenuBuilder->addAction(makeShortcutAction(DIcon("sync.png"), tr("&Refresh"), SLOT(refreshSlot()), "ActionRefresh"));
-    mMenuBuilder->addAction(mToggleOverview = makeShortcutAction(tr("&Save as image"), SLOT(saveImageSlot()), "ActionGraphSaveImage"));
-    mMenuBuilder->addSeparator();
+    mMenuBuilder->addAction(makeShortcutAction(DIcon("image.png"), tr("&Save as image"), SLOT(saveImageSlot()), "ActionGraphSaveImage"));
+
+    MenuBuilder* layoutMenu = new MenuBuilder(this);
+    QActionGroup* layoutGroup = new QActionGroup(this);
+    layoutGroup->addAction(makeAction(DIcon("narrow.png"), tr("Narrow"), [this]() { setGraphLayout(LayoutType::Narrow); }));
+    QAction* mediumLayout =
+    layoutGroup->addAction(makeAction(DIcon("medium.png"), tr("Medium"), [this]() { setGraphLayout(LayoutType::Medium); }));
+    layoutGroup->addAction(makeAction(DIcon("wide.png"), tr("Wide"), [this]() { setGraphLayout(LayoutType::Wide); }));
+    for(QAction* layoutAction : layoutGroup->actions())
+    {
+        layoutAction->setCheckable(true);
+        layoutMenu->addAction(layoutAction);
+    }
+    mediumLayout->setChecked(true);
+    mMenuBuilder->addMenu(makeMenu(DIcon("layout.png"), tr("Layout")), layoutMenu);
 
     mMenuBuilder->loadFromConfig();
 }
@@ -1502,8 +1783,13 @@ void DisassemblerGraphView::keyPressEvent(QKeyEvent* event)
         DbgCmdExec(QString("graph dis.brtrue(%1), silent").arg(ToPtrString(cur_instr)).toUtf8().constData());
     else if(key == Qt::Key_Right)
         DbgCmdExec(QString("graph dis.brfalse(%1), silent").arg(ToPtrString(cur_instr)).toUtf8().constData());
-    if(key == Qt::Key_Return || key == Qt::Key_Enter)
+    else if(key == Qt::Key_Return || key == Qt::Key_Enter)
+    {
+        //Add address to history
+        if(!mHistoryLock)
+            mHistory.addVaToHistory(cur_instr);
         DbgCmdExec(QString("graph dis.branchdest(%1), silent").arg(ToPtrString(cur_instr)).toUtf8().constData());
+    }
 }
 
 void DisassemblerGraphView::followDisassemblerSlot()
@@ -1527,16 +1813,20 @@ void DisassemblerGraphView::colorsUpdatedSlot()
     mCommentBackgroundColor = ConfigColor("DisassemblyCommentBackgroundColor");
     mLabelColor = ConfigColor("DisassemblyLabelColor");
     mLabelBackgroundColor = ConfigColor("DisassemblyLabelBackgroundColor");
-    mCipBackgroundColor = ConfigColor("DisassemblyCipBackgroundColor");
-    mCipColor = ConfigColor("DisassemblyCipColor");
+    mAddressColor = ConfigColor("DisassemblyAddressColor");
+    mAddressBackgroundColor = ConfigColor("DisassemblyAddressBackgroundColor");
 
     jmpColor = ConfigColor("GraphJmpColor");
     brtrueColor = ConfigColor("GraphBrtrueColor");
     brfalseColor = ConfigColor("GraphBrfalseColor");
     retShadowColor = ConfigColor("GraphRetShadowColor");
+    indirectcallShadowColor = ConfigColor("GraphIndirectcallShadowColor");
     backgroundColor = ConfigColor("GraphBackgroundColor");
     if(!backgroundColor.alpha())
         backgroundColor = disassemblySelectionColor;
+    mCipColor = ConfigColor("GraphCipColor");
+    mBreakpointColor = ConfigColor("GraphBreakpointColor");
+    mDisabledBreakpointColor = ConfigColor("GraphDisabledBreakpointColor");
 
     fontChanged();
     loadCurrentGraph();
@@ -1549,16 +1839,27 @@ void DisassemblerGraphView::fontsUpdatedSlot()
 
 void DisassemblerGraphView::shortcutsUpdatedSlot()
 {
-    for(const auto & actionShortcut : actionShortcutPairs)
-        actionShortcut.action->setShortcut(ConfigShortcut(actionShortcut.shortcut));
+    updateShortcuts();
 }
 
 void DisassemblerGraphView::toggleOverviewSlot()
 {
     drawOverview = !drawOverview;
-    mToggleOverview->setCheckable(true);
-    mToggleOverview->setChecked(drawOverview);
-    this->viewport()->update();
+    if(onlySummary)
+    {
+        onlySummary = false;
+        mToggleSummary->setChecked(false);
+        loadCurrentGraph();
+    }
+    else
+        this->viewport()->update();
+}
+
+void DisassemblerGraphView::toggleSummarySlot()
+{
+    drawOverview = false;
+    onlySummary = !onlySummary;
+    loadCurrentGraph();
 }
 
 void DisassemblerGraphView::selectionGetSlot(SELECTIONDATA* selection)
@@ -1596,6 +1897,26 @@ void DisassemblerGraphView::gotoOriginSlot()
     DbgCmdExec("graph cip, silent");
 }
 
+void DisassemblerGraphView::gotoPreviousSlot()
+{
+    if(mHistory.historyHasPrev())
+    {
+        mHistoryLock = true;
+        DbgCmdExecDirect(QString("graph %1, silent").arg(ToPtrString(mHistory.historyPrev())).toUtf8().constData());
+        mHistoryLock = false;
+    }
+}
+
+void DisassemblerGraphView::gotoNextSlot()
+{
+    if(mHistory.historyHasNext())
+    {
+        mHistoryLock = true;
+        DbgCmdExecDirect(QString("graph %1, silent").arg(ToPtrString(mHistory.historyNext())).toUtf8().constData());
+        mHistoryLock = false;
+    }
+}
+
 void DisassemblerGraphView::toggleSyncOriginSlot()
 {
     syncOrigin = !syncOrigin;
@@ -1620,8 +1941,13 @@ void DisassemblerGraphView::setCommentSlot()
 {
     duint wVA = this->get_cursor_pos();
     LineEditDialog mLineEdit(this);
+    mLineEdit.setTextMaxLength(MAX_COMMENT_SIZE - 2);
     QString addr_text = ToPtrString(wVA);
     char comment_text[MAX_COMMENT_SIZE] = "";
+    if(!DbgIsDebugging())
+        return;
+    if(!DbgMemIsValidReadPtr(wVA))
+        return;
 
     if(DbgGetCommentAt((duint)wVA, comment_text))
     {
@@ -1632,7 +1958,6 @@ void DisassemblerGraphView::setCommentSlot()
     }
 
     mLineEdit.setWindowTitle(tr("Add comment at ") + addr_text);
-    mLineEdit.setTextMaxLength(MAX_COMMENT_SIZE - 2);
 
     if(mLineEdit.exec() != QDialog::Accepted)
         return;
@@ -1647,14 +1972,18 @@ void DisassemblerGraphView::setLabelSlot()
 {
     duint wVA = this->get_cursor_pos();
     LineEditDialog mLineEdit(this);
+    mLineEdit.setTextMaxLength(MAX_LABEL_SIZE - 2);
     QString addr_text = ToPtrString(wVA);
     char label_text[MAX_LABEL_SIZE] = "";
+    if(!DbgIsDebugging())
+        return;
+    if(!DbgMemIsValidReadPtr(wVA))
+        return;
 
     if(DbgGetLabelAt((duint)wVA, SEG_DEFAULT, label_text))
         mLineEdit.setText(QString(label_text));
 
     mLineEdit.setWindowTitle(tr("Add label at ") + addr_text);
-    mLineEdit.setTextMaxLength(MAX_LABEL_SIZE - 2);
 restart:
     if(mLineEdit.exec() != QDialog::Accepted)
         return;
@@ -1679,14 +2008,57 @@ restart:
 
 void DisassemblerGraphView::xrefSlot()
 {
-    XREF_INFO mXrefInfo;
+
     if(!DbgIsDebugging())
         return;
-    DbgXrefGet(this->get_cursor_pos(), &mXrefInfo);
+    duint wVA = this->get_cursor_pos();
+    if(!DbgMemIsValidReadPtr(wVA))
+        return;
+    XREF_INFO mXrefInfo;
+    DbgXrefGet(wVA, &mXrefInfo);
     if(!mXrefInfo.refcount)
         return;
+    BridgeFree(mXrefInfo.references);
     if(!mXrefDlg)
         mXrefDlg = new XrefBrowseDialog(this);
-    mXrefDlg->setup(this->get_cursor_pos(), "graph");
+    mXrefDlg->setup(wVA, "graph");
     mXrefDlg->showNormal();
+}
+
+void DisassemblerGraphView::decompileSlot()
+{
+    std::vector<SnowmanRange> ranges;
+    ranges.reserve(currentGraph.nodes.size());
+
+    if(!DbgIsDebugging())
+        return;
+    if(currentGraph.nodes.empty())
+        return;
+    SnowmanRange r;
+    for(const auto & nodeIt : currentGraph.nodes)
+    {
+        const BridgeCFNode & node = nodeIt.second;
+        r.start = node.instrs.empty() ? node.start : node.instrs[0].addr;
+        r.end = node.instrs.empty() ? node.end : node.instrs[node.instrs.size() - 1].addr;
+        BASIC_INSTRUCTION_INFO info;
+        DbgDisasmFastAt(r.end, &info);
+        r.end += info.size - 1;
+        ranges.push_back(r);
+    }
+    std::sort(ranges.begin(), ranges.end(), [](const SnowmanRange & a, const SnowmanRange & b)
+    {
+        return a.start > b.start;
+    });
+    emit displaySnowmanWidget();
+    DecompileRanges(Bridge::getBridge()->snowmanView, ranges.data(), ranges.size());
+}
+
+void DisassemblerGraphView::followActionSlot()
+{
+    QAction* action = qobject_cast<QAction*>(sender());
+    if(action)
+    {
+        QString data = action->data().toString();
+        DbgCmdExecDirect(QString("graph %1, silent").arg(data).toUtf8().constData());
+    }
 }

@@ -8,6 +8,9 @@
 #include "TraceRecord.h"
 #include "disasm_helper.h"
 #include "function.h"
+#include "value.h"
+#include "TraceRecord.h"
+#include "exhandlerinfo.h"
 
 namespace Exprfunc
 {
@@ -30,6 +33,22 @@ namespace Exprfunc
     duint modparty(duint addr)
     {
         return ModGetParty(addr);
+    }
+
+    duint modsystem(duint addr)
+    {
+        return ModGetParty(addr) == 1;
+    }
+
+    duint moduser(duint addr)
+    {
+        return ModGetParty(addr) == 0;
+    }
+
+    duint modrva(duint addr)
+    {
+        auto base = ModBaseFromAddr(addr);
+        return base ? addr - base : 0;
     }
 
     static duint selstart(int hWindow)
@@ -103,10 +122,20 @@ namespace Exprfunc
         return MemIsCodePage(addr, false);
     }
 
+    duint memisstring(duint addr)
+    {
+        STRING_TYPE strType;
+        disasmispossiblestring(addr, &strType);
+        if(strType != STRING_TYPE::str_none)
+            return strType == STRING_TYPE::str_unicode ? 2 : 1;
+        else
+            return 0;
+    }
+
     duint memdecodepointer(duint ptr)
     {
         auto decoded = ptr;
-        return MemDecodePointer(&decoded, true) ? decoded : ptr;
+        return MemDecodePointer(&decoded, IsVistaOrLater()) ? decoded : ptr;
     }
 
     duint dislen(duint addr)
@@ -160,7 +189,7 @@ namespace Exprfunc
         unsigned char data[16];
         if(MemRead(addr, data, sizeof(data), nullptr, true))
         {
-            Capstone cp;
+            Zydis cp;
             if(cp.Disassemble(addr, data))
                 return cp.IsNop();
         }
@@ -172,7 +201,7 @@ namespace Exprfunc
         unsigned char data[16];
         if(MemRead(addr, data, sizeof(data), nullptr, true))
         {
-            Capstone cp;
+            Zydis cp;
             if(cp.Disassemble(addr, data))
                 return cp.IsUnusual();
         }
@@ -243,6 +272,11 @@ namespace Exprfunc
         return trenabled(addr) ? TraceRecord.getHitCount(addr) : 0;
     }
 
+    duint trisruntraceenabled()
+    {
+        return _dbg_dbgisRunTraceEnabled() ? 1 : 0;
+    }
+
     duint gettickcount()
     {
 #ifdef _WIN64
@@ -294,5 +328,77 @@ namespace Exprfunc
     {
         duint end;
         return FunctionGet(addr, nullptr, &end) ? end : 0;
+    }
+
+    duint refcount()
+    {
+        return GuiReferenceGetRowCount();
+    }
+
+    duint refaddr(duint row)
+    {
+        auto content = GuiReferenceGetCellContent(int(row), 0);
+        duint addr = 0;
+        valfromstring(content, &addr, false);
+        BridgeFree(content);
+        return addr;
+    }
+
+    duint refsearchcount()
+    {
+        return GuiReferenceSearchGetRowCount();
+    }
+
+    duint refsearchaddr(duint row)
+    {
+        auto content = GuiReferenceSearchGetCellContent(int(row), 0);
+        duint addr = 0;
+        valfromstring(content, &addr, false);
+        BridgeFree(content);
+        return addr;
+    }
+
+    static String argExpr(duint index)
+    {
+#ifdef _WIN64
+        //http://msdn.microsoft.com/en-us/library/windows/hardware/ff561499(v=vs.85).aspx
+        switch(index)
+        {
+        case 0:
+            return "rcx";
+        case 1:
+            return "rdx";
+        case 2:
+            return "r8";
+        case 3:
+            return "r9";
+        default:
+            break;
+        }
+#endif
+        return StringUtils::sprintf("[csp+%X]", int32_t(++index * sizeof(duint)));
+    }
+
+    duint argget(duint index)
+    {
+        duint value;
+        valfromstring(argExpr(index).c_str(), &value);
+        return value;
+    }
+
+    duint argset(duint index, duint value)
+    {
+        auto expr = argExpr(index);
+        duint oldvalue;
+        valfromstring(expr.c_str(), &oldvalue);
+        valtostring(expr.c_str(), value, true);
+        return oldvalue;
+    }
+
+    duint bpgoto(duint cip)
+    {
+        //This is a function to sets CIP without calling DebugUpdateGui. This is a workaround for "bpgoto".
+        SetContextDataEx(hActiveThread, UE_CIP, cip);
+        return cip;
     }
 }

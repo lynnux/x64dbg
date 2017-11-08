@@ -2,6 +2,7 @@
 #define XREFBROWSEDIALOG_H
 
 #include "Bridge.h"
+#include "ActionHelpers.h"
 #include <QDialog>
 #include <QListWidgetItem>
 
@@ -10,7 +11,7 @@ namespace Ui
     class XrefBrowseDialog;
 }
 
-class XrefBrowseDialog : public QDialog
+class XrefBrowseDialog : public QDialog, public ActionHelper<XrefBrowseDialog>
 {
     Q_OBJECT
 
@@ -52,14 +53,13 @@ private:
 
     void changeAddress(duint address);
     void setupContextMenu();
+    QString GetFunctionSymbol(duint addr);
 
     XREF_INFO mXrefInfo;
     duint mAddress;
     int mPrevSelectionSize;
     QString mCommand;
     MenuBuilder* mMenu;
-
-#include "ActionHelpers.h"
 };
 
 #endif // XREFBROWSEDIALOG_H

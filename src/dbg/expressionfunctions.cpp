@@ -2,10 +2,12 @@
 #include "threading.h"
 #include "exprfunc.h"
 #include "module.h"
+#include "debugger.h"
+#include "value.h"
 
 std::unordered_map<String, ExpressionFunctions::Function> ExpressionFunctions::mFunctions;
 
-//Copied from http://stackoverflow.com/a/7858971/1806760
+//Copied from https://stackoverflow.com/a/7858971/1806760
 template<int...>
 struct seq {};
 
@@ -28,11 +30,12 @@ template<typename... Ts>
 static bool RegisterEasy(const String & name, duint(*cbFunction)(Ts...))
 {
     auto aliases = StringUtils::Split(name, ',');
-    if(!ExpressionFunctions::Register(aliases[0], sizeof...(Ts), [cbFunction](int argc, duint * argv, void* userdata)
-{
-    return callFunc(argv, cbFunction, typename gens<sizeof...(Ts)>::type());
-    }))
-    return false;
+    auto tempFunc = [cbFunction](int argc, duint * argv, void* userdata)
+    {
+        return callFunc(argv, cbFunction, typename gens<sizeof...(Ts)>::type());
+    };
+    if(!ExpressionFunctions::Register(aliases[0], sizeof...(Ts), tempFunc))
+        return false;
     for(size_t i = 1; i < aliases.size(); i++)
         ExpressionFunctions::RegisterAlias(aliases[0], aliases[i]);
     return true;
@@ -58,6 +61,11 @@ void ExpressionFunctions::Init()
     RegisterEasy("mod.size", ModSizeFromAddr);
     RegisterEasy("mod.hash", ModHashFromAddr);
     RegisterEasy("mod.entry", ModEntryFromAddr);
+    RegisterEasy("mod.system,mod.issystem", modsystem);
+    RegisterEasy("mod.user,mod.isuser", moduser);
+    RegisterEasy("mod.main,mod.mainbase", dbgdebuggedbase);
+    RegisterEasy("mod.rva", modrva);
+    RegisterEasy("mod.offset,mod.fileoffset", valvatofileoffset);
 
     //Process information
     RegisterEasy("peb,PEB", peb);
@@ -70,10 +78,11 @@ void ExpressionFunctions::Init()
     RegisterEasy("GetTickCount,gettickcount", gettickcount);
 
     //Memory
-    RegisterEasy("mem.valid", memvalid);
+    RegisterEasy("mem.valid,mem.isvalid", memvalid);
     RegisterEasy("mem.base", membase);
     RegisterEasy("mem.size", memsize);
     RegisterEasy("mem.iscode", memiscode);
+    RegisterEasy("mem.isstring", memisstring);
     RegisterEasy("mem.decodepointer", memdecodepointer);
 
     //Disassembly
@@ -96,6 +105,7 @@ void ExpressionFunctions::Init()
     //Trace record
     RegisterEasy("tr.enabled", trenabled);
     RegisterEasy("tr.hitcount,tr.count", trhitcount);
+    RegisterEasy("tr.runtraceenabled", trisruntraceenabled);
 
     //Byte/Word/Dword/Qword/Pointer
     RegisterEasy("ReadByte,Byte,byte", readbyte);
@@ -109,6 +119,19 @@ void ExpressionFunctions::Init()
     //Functions
     RegisterEasy("func.start,sub.start", funcstart);
     RegisterEasy("func.end,sub.end", funcend);
+
+    //References
+    RegisterEasy("ref.count", refcount);
+    RegisterEasy("ref.addr", refaddr);
+    RegisterEasy("refsearch.count", refsearchcount);
+    RegisterEasy("refsearch.addr", refsearchaddr);
+
+    //Arguments
+    RegisterEasy("arg.get,arg", argget);
+    RegisterEasy("arg.set", argset);
+
+    //Undocumented
+    RegisterEasy("bpgoto", bpgoto);
 }
 
 bool ExpressionFunctions::Register(const String & name, int argc, const CBEXPRESSIONFUNCTION & cbFunction, void* userdata)

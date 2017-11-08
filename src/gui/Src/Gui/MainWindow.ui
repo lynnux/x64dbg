@@ -23,7 +23,7 @@
      <x>0</x>
      <y>0</y>
      <width>868</width>
-     <height>21</height>
+     <height>23</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -47,6 +47,7 @@
     <addaction name="actionImportdatabase"/>
     <addaction name="actionExportdatabase"/>
     <addaction name="actionPatches"/>
+    <addaction name="actionRestartAdmin"/>
     <addaction name="separator"/>
     <addaction name="actionExit"/>
    </widget>
@@ -66,15 +67,16 @@
     <addaction name="actionSource"/>
     <addaction name="actionReferences"/>
     <addaction name="actionThreads"/>
+    <addaction name="actionSnowman"/>
+    <addaction name="actionHandles"/>
+    <addaction name="actionGraph"/>
+    <addaction name="actionTrace"/>
     <addaction name="actionPatches"/>
     <addaction name="actionComments"/>
     <addaction name="actionLabels"/>
     <addaction name="actionBookmarks"/>
     <addaction name="actionFunctions"/>
     <addaction name="actionVariables"/>
-    <addaction name="actionSnowman"/>
-    <addaction name="actionHandles"/>
-    <addaction name="actionGraph"/>
     <addaction name="separator"/>
     <addaction name="actionPreviousTab"/>
     <addaction name="actionNextTab"/>
@@ -146,6 +148,7 @@
     <addaction name="actionBlog"/>
     <addaction name="actionDonate"/>
     <addaction name="actionReportBug"/>
+    <addaction name="actionPlugins"/>
     <addaction name="separator"/>
     <addaction name="actionManual"/>
     <addaction name="actionFaq"/>
@@ -214,20 +217,11 @@
    <addaction name="actionStepInto"/>
    <addaction name="actionStepOver"/>
    <addaction name="separator"/>
+   <addaction name="actionTicnd"/>
+   <addaction name="actionTocnd"/>
+   <addaction name="separator"/>
    <addaction name="actionRtr"/>
    <addaction name="actionRtu"/>
-   <addaction name="separator"/>
-   <addaction name="actionCpu"/>
-   <addaction name="actionLog"/>
-   <addaction name="actionBreakpoints"/>
-   <addaction name="actionMemoryMap"/>
-   <addaction name="actionCallStack"/>
-   <addaction name="actionSEHChain"/>
-   <addaction name="actionScript"/>
-   <addaction name="actionSymbolInfo"/>
-   <addaction name="actionSource"/>
-   <addaction name="actionReferences"/>
-   <addaction name="actionThreads"/>
    <addaction name="separator"/>
    <addaction name="actionScylla"/>
    <addaction name="separator"/>
@@ -236,18 +230,13 @@
    <addaction name="actionLabels"/>
    <addaction name="actionBookmarks"/>
    <addaction name="actionFunctions"/>
+   <addaction name="actionVariables"/>
    <addaction name="separator"/>
    <addaction name="actionStrings"/>
    <addaction name="actionCalls"/>
    <addaction name="separator"/>
    <addaction name="actionCalculator"/>
    <addaction name="actionCheckUpdates"/>
-   <addaction name="actionDonate"/>
-   <addaction name="actionReportBug"/>
-   <addaction name="separator"/>
-   <addaction name="actionManual"/>
-   <addaction name="actionFaq"/>
-   <addaction name="actionAbout"/>
   </widget>
   <widget class="QStatusBar" name="statusBar">
    <property name="sizeGripEnabled">
@@ -1118,13 +1107,48 @@
    </property>
   </action>
   <action name="actionHideTab">
+   <property name="icon">
+    <iconset resource="../../resource.qrc">
+     <normaloff>:/icons/images/hidetab.png</normaloff>:/icons/images/hidetab.png</iconset>
+   </property>
    <property name="text">
     <string>Hide Tab</string>
    </property>
   </action>
   <action name="actionVariables">
+   <property name="icon">
+    <iconset resource="../../resource.qrc">
+     <normaloff>:/icons/images/variables.png</normaloff>:/icons/images/variables.png</iconset>
+   </property>
    <property name="text">
     <string>&amp;Variables</string>
+   </property>
+  </action>
+  <action name="actionRestartAdmin">
+   <property name="icon">
+    <iconset resource="../../resource.qrc">
+     <normaloff>:/icons/images/uac.png</normaloff>:/icons/images/uac.png</iconset>
+   </property>
+   <property name="text">
+    <string>Restart as Admin</string>
+   </property>
+  </action>
+  <action name="actionPlugins">
+   <property name="icon">
+    <iconset resource="../../resource.qrc">
+     <normaloff>:/icons/images/plugin.png</normaloff>:/icons/images/plugin.png</iconset>
+   </property>
+   <property name="text">
+    <string>Plugins</string>
+   </property>
+  </action>
+  <action name="actionTrace">
+   <property name="icon">
+    <iconset resource="../../resource.qrc">
+     <normaloff>:/icons/images/trace.png</normaloff>:/icons/images/trace.png</iconset>
+   </property>
+   <property name="text">
+    <string>Trace</string>
    </property>
   </action>
  </widget>

@@ -6,13 +6,14 @@
 #include <QCheckBox>
 #include "SearchListViewTable.h"
 #include "MenuBuilder.h"
+#include "ActionHelpers.h"
 
 namespace Ui
 {
     class SearchListView;
 }
 
-class SearchListView : public QWidget
+class SearchListView : public QWidget, public ActionHelper<SearchListView>
 {
     Q_OBJECT
 
@@ -48,12 +49,12 @@ signals:
 protected:
     bool eventFilter(QObject* obj, QEvent* event);
 
-#include "ActionHelpers.h"
-
 private:
     QCheckBox* mRegexCheckbox;
     QCheckBox* mLockCheckbox;
     QAction* mSearchAction;
+
+    void LoadPrevListLayout(SearchListViewTable* mPrevList);
 };
 
 #endif // SEARCHLISTVIEW_H

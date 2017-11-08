@@ -1,4 +1,5 @@
 #include "cmd-analysis.h"
+#include "ntdll/ntdll.h"
 #include "linearanalysis.h"
 #include "memory.h"
 #include "exceptiondirectoryanalysis.h"
@@ -14,6 +15,7 @@
 #include "symbolinfo.h"
 #include "exception.h"
 #include "TraceRecord.h"
+#include "dbghelp_safe.h"
 
 bool cbInstrAnalyse(int argc, char* argv[])
 {
@@ -155,12 +157,12 @@ bool cbDebugDownloadSymbol(int argc, char* argv[])
     dputs(QT_TRANSLATE_NOOP("DBG", "This may take very long, depending on your network connection and data in the debug directory..."));
     Memory<char*> szDefaultStore(MAX_SETTING_SIZE + 1);
     const char* szSymbolStore = szDefaultStore();
-    if(!BridgeSettingGet("Symbols", "DefaultStore", szDefaultStore()))  //get default symbol store from settings
+    if(!BridgeSettingGet("Symbols", "DefaultStore", szDefaultStore())) //get default symbol store from settings
     {
-        strcpy_s(szDefaultStore(), MAX_SETTING_SIZE, "http://msdl.microsoft.com/download/symbols");
+        strcpy_s(szDefaultStore(), MAX_SETTING_SIZE, "https://msdl.microsoft.com/download/symbols");
         BridgeSettingSet("Symbols", "DefaultStore", szDefaultStore());
     }
-    if(argc < 2)  //no arguments
+    if(argc < 2) //no arguments
     {
         SymDownloadAllSymbols(szSymbolStore); //download symbols for all modules
         GuiSymbolRefreshCurrent();
@@ -177,11 +179,11 @@ bool cbDebugDownloadSymbol(int argc, char* argv[])
     wchar_t wszModulePath[MAX_PATH] = L"";
     if(!GetModuleFileNameExW(fdProcessInfo->hProcess, (HMODULE)modbase, wszModulePath, MAX_PATH))
     {
-        dputs(QT_TRANSLATE_NOOP("DBG", "GetModuleFileNameExA failed!"));
+        dputs(QT_TRANSLATE_NOOP("DBG", "GetModuleFileNameExW failed!"));
         return false;
     }
     wchar_t szOldSearchPath[MAX_PATH] = L"";
-    if(!SafeSymGetSearchPathW(fdProcessInfo->hProcess, szOldSearchPath, MAX_PATH))  //backup current search path
+    if(!SafeSymGetSearchPathW(fdProcessInfo->hProcess, szOldSearchPath, MAX_PATH)) //backup current search path
     {
         dputs(QT_TRANSLATE_NOOP("DBG", "SymGetSearchPath failed!"));
         return false;
@@ -190,12 +192,12 @@ bool cbDebugDownloadSymbol(int argc, char* argv[])
     if(argc > 2)
         szSymbolStore = argv[2];
     sprintf_s(szServerSearchPath, "SRV*%s*%s", szSymbolCachePath, szSymbolStore);
-    if(!SafeSymSetSearchPathW(fdProcessInfo->hProcess, StringUtils::Utf8ToUtf16(szServerSearchPath).c_str()))  //set new search path
+    if(!SafeSymSetSearchPathW(fdProcessInfo->hProcess, StringUtils::Utf8ToUtf16(szServerSearchPath).c_str())) //set new search path
     {
         dputs(QT_TRANSLATE_NOOP("DBG", "SymSetSearchPath (1) failed!"));
         return false;
     }
-    if(!SafeSymUnloadModule64(fdProcessInfo->hProcess, (DWORD64)modbase))  //unload module
+    if(!SafeSymUnloadModule64(fdProcessInfo->hProcess, (DWORD64)modbase)) //unload module
     {
         SafeSymSetSearchPathW(fdProcessInfo->hProcess, szOldSearchPath);
         dputs(QT_TRANSLATE_NOOP("DBG", "SymUnloadModule64 failed!"));
@@ -203,7 +205,7 @@ bool cbDebugDownloadSymbol(int argc, char* argv[])
     }
     auto symOptions = SafeSymGetOptions();
     SafeSymSetOptions(symOptions & ~SYMOPT_IGNORE_CVREC);
-    if(!SymLoadModuleExW(fdProcessInfo->hProcess, 0, wszModulePath, 0, (DWORD64)modbase, 0, 0, 0))  //load module
+    if(!SymLoadModuleExW(fdProcessInfo->hProcess, 0, wszModulePath, 0, (DWORD64)modbase, 0, 0, 0)) //load module
     {
         dputs(QT_TRANSLATE_NOOP("DBG", "SymLoadModuleEx failed!"));
         SafeSymSetOptions(symOptions);
@@ -223,35 +225,27 @@ bool cbDebugDownloadSymbol(int argc, char* argv[])
 
 bool cbInstrImageinfo(int argc, char* argv[])
 {
-    duint mod;
-    SHARED_ACQUIRE(LockModules);
-    MODINFO* info;
     duint address;
     if(argc < 2)
         address = GetContextDataEx(hActiveThread, UE_CIP);
-    else
+    else if(!valfromstring(argv[1], &address))
     {
-        if(!valfromstring(argv[1], &address))
+        dputs(QT_TRANSLATE_NOOP("DBG", "Invalid argument"));
+        return false;
+    }
+    duint c, dllc, mod;
+    {
+        SHARED_ACQUIRE(LockModules);
+        auto modinfo = ModInfoFromAddr(address);
+        if(!modinfo)
         {
             dputs(QT_TRANSLATE_NOOP("DBG", "Invalid argument"));
             return false;
         }
+        c = GetPE32DataFromMappedFile(modinfo->fileMapVA, 0, UE_CHARACTERISTICS);
+        dllc = GetPE32DataFromMappedFile(modinfo->fileMapVA, 0, UE_DLLCHARACTERISTICS);
+        mod = modinfo->base;
     }
-    mod = MemFindBaseAddr(address, nullptr);
-    if(mod == 0)
-    {
-        dputs(QT_TRANSLATE_NOOP("DBG", "Invalid argument"));
-        return false;
-    }
-    info = ModInfoFromAddr(mod);
-    if(info == nullptr)
-    {
-        dputs(QT_TRANSLATE_NOOP("DBG", "Invalid argument"));
-        return false;
-    }
-    auto c = GetPE32DataFromMappedFile(info->fileMapVA, 0, UE_CHARACTERISTICS);
-    auto dllc = GetPE32DataFromMappedFile(info->fileMapVA, 0, UE_DLLCHARACTERISTICS);
-    SHARED_RELEASE();
 
     auto pFlag = [](ULONG_PTR value, ULONG_PTR flag, const char* name)
     {
@@ -386,15 +380,20 @@ bool cbInstrExhandlers(int argc, char* argv[])
     else
         dputs(QT_TRANSLATE_NOOP("DBG", "Failed to get VEH (loaded symbols for ntdll.dll?)"));
 
-    if(ExHandlerGetInfo(EX_HANDLER_VCH, entries))
-        printExhandlers("VectoredContinueHandler (VCH)", entries);
-    else
-        dputs(QT_TRANSLATE_NOOP("DBG", "Failed to get VCH (loaded symbols for ntdll.dll?)"));
+    if(IsVistaOrLater())
+    {
+        if(ExHandlerGetInfo(EX_HANDLER_VCH, entries))
+            printExhandlers("VectoredContinueHandler (VCH)", entries);
+        else
+            dputs(QT_TRANSLATE_NOOP("DBG", "Failed to get VCH (loaded symbols for ntdll.dll?)"));
+    }
 
     if(ExHandlerGetInfo(EX_HANDLER_UNHANDLED, entries))
         printExhandlers("UnhandledExceptionFilter", entries);
-    else
+    else if(IsVistaOrLater())
         dputs(QT_TRANSLATE_NOOP("DBG", "Failed to get UnhandledExceptionFilter (loaded symbols for kernelbase.dll?)"));
+    else
+        dputs(QT_TRANSLATE_NOOP("DBG", "Failed to get UnhandledExceptionFilter (loaded symbols for kernel32.dll?)"));
     return true;
 }
 
@@ -405,7 +404,7 @@ bool cbInstrExinfo(int argc, char* argv[])
     dputs_untranslated("EXCEPTION_DEBUG_INFO:");
     dprintf_untranslated("           dwFirstChance: %X\n", info.dwFirstChance);
     auto exceptionName = ExceptionCodeToName(record.ExceptionCode);
-    if(!exceptionName.size())    //if no exception was found, try the error codes (RPC_S_*)
+    if(!exceptionName.size()) //if no exception was found, try the error codes (RPC_S_*)
         exceptionName = ErrorCodeToName(record.ExceptionCode);
     if(exceptionName.size())
         dprintf_untranslated("           ExceptionCode: %08X (%s)\n", record.ExceptionCode, exceptionName.c_str());
@@ -426,19 +425,24 @@ bool cbInstrExinfo(int argc, char* argv[])
                 dprintf_untranslated("ExceptionInformation[%02u]: %p %s", i, record.ExceptionInformation[i], symbolic.c_str());
             else
                 dprintf_untranslated("ExceptionInformation[%02u]: %p", i, record.ExceptionInformation[i]);
-            if(record.ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
+            //https://msdn.microsoft.com/en-us/library/windows/desktop/aa363082(v=vs.85).aspx
+            if(record.ExceptionCode == EXCEPTION_ACCESS_VIOLATION ||
+                    record.ExceptionCode == EXCEPTION_IN_PAGE_ERROR ||
+                    record.ExceptionCode == EXCEPTION_GUARD_PAGE)
             {
                 if(i == 0)
                 {
                     if(record.ExceptionInformation[i] == 0)
-                        dprintf_untranslated(" MEM READ");
+                        dprintf_untranslated(" Read");
                     else if(record.ExceptionInformation[i] == 1)
-                        dprintf_untranslated(" MEM WRITE");
+                        dprintf_untranslated(" Write");
                     else if(record.ExceptionInformation[i] == 8)
-                        dprintf_untranslated(" DEP VIOLATION");
+                        dprintf_untranslated(" DEP Violation");
                 }
                 else if(i == 1)
                     dprintf_untranslated(" Inaccessible Address");
+                else if(record.ExceptionCode == EXCEPTION_IN_PAGE_ERROR && i == 2)
+                    dprintf_untranslated(" %s", ExceptionCodeToName((unsigned int)record.ExceptionInformation[i]).c_str());
             }
             dprintf_untranslated("\n");
         }

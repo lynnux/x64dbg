@@ -11,6 +11,7 @@
 #include "jit.h"
 #include "mnemonichelp.h"
 #include "commandline.h"
+#include "stringformat.h"
 
 bool cbInstrChd(int argc, char* argv[])
 {
@@ -49,6 +50,7 @@ bool cbDebugHide(int argc, char* argv[])
 }
 
 static duint LoadLibThreadID;
+static duint FreeLibThreadID;
 static duint DLLNameMem;
 static duint ASMAddr;
 static TITAN_ENGINE_CONTEXT_t backupctx = { 0 };
@@ -85,69 +87,169 @@ bool cbDebugLoadLib(int argc, char* argv[])
         return false;
     }
 
+#ifdef _WIN64
+    unsigned char loader[] =
+    {
+        0x48, 0xB9, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, //movabs rcx, DLLNameAddr
+        0x48, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, //movabs rax, p_LoadLibraryW
+        0xFF, 0xD0, //call rax
+        0x90 //nop
+    };
+#else
+    unsigned char loader[] =
+    {
+        0x68, 0xFF, 0xFF, 0xFF, 0xFF, //push DLLNameMem
+        0xB8, 0xFF, 0xFF, 0xFF, 0xFF, //mov eax, p_LoadLibraryW
+        0xFF, 0xD0, //call eax
+        0x90 //nop
+    };
+#endif //_WIN64
+    auto DLLNameOffset = ArchValue(1, 2), LoadLibraryOffset = ArchValue(6, 12);
+
     LoadLibThreadID = fdProcessInfo->dwThreadId;
     HANDLE LoadLibThread = ThreadGetHandle((DWORD)LoadLibThreadID);
 
-    DLLNameMem = MemAllocRemote(0, strlen(argv[1]) + 1);
-    ASMAddr = MemAllocRemote(0, 0x1000);
+    auto DLLNameW = StringUtils::Utf8ToUtf16(argv[1]);
+    auto DLLNameSize = (DLLNameW.length() + 1) * 2;
 
-    if(!DLLNameMem || !ASMAddr)
+    duint p_LoadLibraryW = 0;
+    if(!valfromstring("kernel32:LoadLibraryW", &p_LoadLibraryW, false))
+    {
+        dputs(QT_TRANSLATE_NOOP("DBG", "Error: couldn't get kernel32:LoadLibraryW"));
+        return false;
+    }
+
+    ASMAddr = MemAllocRemote(0, sizeof(loader));
+    DLLNameMem = MemAllocRemote(0, DLLNameSize);
+    if(!ASMAddr || !DLLNameMem)
     {
         dputs(QT_TRANSLATE_NOOP("DBG", "Error: couldn't allocate memory in debuggee"));
         return false;
     }
 
-    if(!MemWrite(DLLNameMem, argv[1], strlen(argv[1])))
+    // Set addresses in the loader
+    memcpy(loader + DLLNameOffset, &DLLNameMem, sizeof(duint));
+    memcpy(loader + LoadLibraryOffset, &p_LoadLibraryW, sizeof(duint));
+
+    if(!MemWrite(ASMAddr, loader, sizeof(loader)) || !MemWrite(DLLNameMem, DLLNameW.c_str(), DLLNameSize))
     {
+        MemFreeRemote(ASMAddr);
         dputs(QT_TRANSLATE_NOOP("DBG", "Error: couldn't write process memory"));
         return false;
     }
 
-    int size = 0;
-    int counter = 0;
-    duint LoadLibraryA = 0;
-    char command[50] = "";
-    char error[MAX_ERROR_SIZE] = "";
-
-    GetFullContextDataEx(LoadLibThread, &backupctx);
-
-    if(!valfromstring("kernel32:LoadLibraryA", &LoadLibraryA, false))
+    if(!SetBPX(ASMAddr + sizeof(loader) - 1, UE_SINGLESHOOT | UE_BREAKPOINT_TYPE_INT3, (void*)cbDebugLoadLibBPX))
     {
-        dputs(QT_TRANSLATE_NOOP("DBG", "Error: couldn't get kernel32:LoadLibraryA"));
+        MemFreeRemote(ASMAddr);
+        dputs(QT_TRANSLATE_NOOP("DBG", "Error: couldn't SetBPX"));
         return false;
     }
 
-    // Arch specific asm code
-#ifdef _WIN64
-    sprintf_s(command, "mov rcx, %p", DLLNameMem);
-#else
-    sprintf_s(command, "push %p", DLLNameMem);
-#endif // _WIN64
-
-    assembleat(ASMAddr, command, &size, error, true);
-    counter += size;
-
-#ifdef _WIN64
-    sprintf_s(command, "mov rax, %p", LoadLibraryA);
-    assembleat(ASMAddr + counter, command, &size, error, true);
-    counter += size;
-    sprintf_s(command, "call rax");
-#else
-    sprintf_s(command, "call %p", LoadLibraryA);
-#endif // _WIN64
-
-    assembleat(ASMAddr + counter, command, &size, error, true);
-    counter += size;
-
-    SetContextDataEx(LoadLibThread, UE_CIP, ASMAddr);
-    auto ok = SetBPX(ASMAddr + counter, UE_SINGLESHOOT | UE_BREAKPOINT_TYPE_INT3, (void*)cbDebugLoadLibBPX);
-
     ThreadSuspendAll();
+    GetFullContextDataEx(LoadLibThread, &backupctx);
+    SetContextDataEx(LoadLibThread, UE_CIP, ASMAddr);
+    SetContextDataEx(LoadLibThread, UE_CSP, backupctx.csp & ~0xF);
     ResumeThread(LoadLibThread);
 
     unlock(WAITID_RUN);
 
-    return ok;
+    return true;
+}
+
+static void cbDebugFreeLibBPX()
+{
+    HANDLE FreeLibThread = ThreadGetHandle((DWORD)FreeLibThreadID);
+#ifdef _WIN64
+    duint LibAddr = GetContextDataEx(FreeLibThread, UE_RAX);
+#else
+    duint LibAddr = GetContextDataEx(FreeLibThread, UE_EAX);
+#endif //_WIN64
+    varset("$result", LibAddr, false);
+    backupctx.eflags &= ~0x100;
+    SetFullContextDataEx(FreeLibThread, &backupctx);
+    MemFreeRemote(ASMAddr);
+    ThreadResumeAll();
+    //update GUI
+    DebugUpdateGuiSetStateAsync(GetContextDataEx(hActiveThread, UE_CIP), true);
+    //lock
+    lock(WAITID_RUN);
+    dbgsetforeground();
+    PLUG_CB_PAUSEDEBUG pauseInfo = { nullptr };
+    plugincbcall(CB_PAUSEDEBUG, &pauseInfo);
+    wait(WAITID_RUN);
+}
+
+bool cbDebugFreeLib(int argc, char* argv[])
+{
+    duint base = 0;
+    if(IsArgumentsLessThan(argc, 2) || !valfromstring(argv[1], &base, false))
+        return false;
+    base = ModBaseFromAddr(base);
+    if(!base)
+    {
+        dputs(QT_TRANSLATE_NOOP("DBG", "Error: the specified address does not point inside a module"));
+        return false;
+    }
+
+    unsigned char loader[] =
+#ifdef _WIN64
+    {
+        0x48, 0xB9, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, //movabs rcx, ModuleBase
+        0x48, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, //movabs rax, p_FreeLibrary
+        0xFF, 0xD0, //call rax
+        0x90 //nop
+    };
+#else
+        {
+            0x68, 0xFF, 0xFF, 0xFF, 0xFF, //push ModuleBase
+            0xB8, 0xFF, 0xFF, 0xFF, 0xFF, //mov eax, p_FreeLibrary
+            0xFF, 0xD0, //call eax
+            0x90 //nop
+        };
+#endif //_WIN64
+    auto ModuleBaseOffset = ArchValue(1, 2), FreeLibraryOffset = ArchValue(6, 12);
+
+    FreeLibThreadID = fdProcessInfo->dwThreadId;
+    HANDLE UnLoadLibThread = ThreadGetHandle((DWORD)FreeLibThreadID);
+
+    duint p_FreeLibrary = 0;
+    if(!valfromstring("kernel32:FreeLibrary", &p_FreeLibrary, false))
+    {
+        dputs(QT_TRANSLATE_NOOP("DBG", "Error: couldn't get kernel32:FreeLibrary"));
+        return false;
+    }
+
+    ASMAddr = MemAllocRemote(0, sizeof(loader));
+    if(!ASMAddr)
+    {
+        dputs(QT_TRANSLATE_NOOP("DBG", "Error: couldn't allocate memory in debuggee"));
+        return false;
+    }
+
+    // Set addresses in the loader
+    memcpy(loader + ModuleBaseOffset, &base, sizeof(duint));
+    memcpy(loader + FreeLibraryOffset, &p_FreeLibrary, sizeof(duint));
+
+    if(!MemWrite(ASMAddr, loader, sizeof(loader)))
+    {
+        MemFreeRemote(ASMAddr);
+        dputs(QT_TRANSLATE_NOOP("DBG", "Error: couldn't write process memory"));
+        return false;
+    }
+
+    if(!SetBPX(ASMAddr + sizeof(loader) - 1, UE_SINGLESHOOT | UE_BREAKPOINT_TYPE_INT3, (void*)cbDebugFreeLibBPX))
+    {
+        MemFreeRemote(ASMAddr);
+        dputs(QT_TRANSLATE_NOOP("DBG", "Error: couldn't SetBPX"));
+        return false;
+    }
+
+    ThreadSuspendAll();
+    GetFullContextDataEx(UnLoadLibThread, &backupctx);
+    SetContextDataEx(UnLoadLibThread, UE_CIP, ASMAddr);
+    ResumeThread(UnLoadLibThread);
+    unlock(WAITID_RUN);
+    return true;
 }
 
 bool cbInstrAssemble(int argc, char* argv[])
@@ -170,10 +272,11 @@ bool cbInstrAssemble(int argc, char* argv[])
         fillnop = true;
     char error[MAX_ERROR_SIZE] = "";
     int size = 0;
-    if(!assembleat(addr, argv[2], &size, error, fillnop))
+    auto asmFormat = stringformatinline(argv[2]);
+    if(!assembleat(addr, asmFormat.c_str(), &size, error, fillnop))
     {
         varset("$result", size, false);
-        dprintf(QT_TRANSLATE_NOOP("DBG", "Failed to assemble \"%s\" (%s)\n"), argv[2], error);
+        dprintf(QT_TRANSLATE_NOOP("DBG", "Failed to assemble \"%s\" (%s)\n"), asmFormat.c_str(), error);
         return false;
     }
     varset("$result", size, false);
@@ -199,7 +302,7 @@ bool cbInstrGpa(int argc, char* argv[])
 
 bool cbDebugSetJIT(int argc, char* argv[])
 {
-    arch actual_arch = invalid;
+    arch actual_arch = notfound;
     char* jit_debugger_cmd = "";
     Memory<char*> oldjit(MAX_SETTING_SIZE + 1);
     char path[JIT_ENTRY_DEF_SIZE];
@@ -353,7 +456,7 @@ bool cbDebugGetJIT(int argc, char* argv[])
         {
             if(!BridgeSettingGet("JIT", "Old", oldjit()))
             {
-                dputs(QT_TRANSLATE_NOOP("DBG", "Error: there is not an OLD JIT entry stored yet."));
+                dputs(QT_TRANSLATE_NOOP("DBG", "Error there is no old JIT entry stored."));
                 return false;
             }
             else
@@ -390,7 +493,7 @@ bool cbDebugGetJIT(int argc, char* argv[])
 bool cbDebugGetJITAuto(int argc, char* argv[])
 {
     bool jit_auto = false;
-    arch actual_arch = invalid;
+    arch actual_arch = notfound;
 
     if(argc == 1)
     {
@@ -424,7 +527,7 @@ bool cbDebugGetJITAuto(int argc, char* argv[])
     }
     else
     {
-        dputs(QT_TRANSLATE_NOOP("DBG", "Unknown JIT auto entry type. Use x64 or x32 as parameter"));
+        dputs(QT_TRANSLATE_NOOP("DBG", "Unknown JIT auto entry type. Use x64 or x32 as parameter."));
     }
 
     dprintf(QT_TRANSLATE_NOOP("DBG", "JIT auto %s: %s\n"), (actual_arch == x64) ? "x64" : "x32", jit_auto ? "ON" : "OFF");
@@ -478,7 +581,7 @@ bool cbDebugSetJITAuto(int argc, char* argv[])
             actual_arch = x32;
         else
         {
-            dputs(QT_TRANSLATE_NOOP("DBG", "Unknown JIT auto entry type. Use x64 or x32 as parameter"));
+            dputs(QT_TRANSLATE_NOOP("DBG", "Unknown JIT auto entry type. Use x64 or x32 as parameter."));
             return false;
         }
 
@@ -622,4 +725,11 @@ bool cbInstrConfig(int argc, char* argv[])
             return false;
         }
     }
+}
+
+bool cbInstrRestartadmin(int argc, char* argv[])
+{
+    if(dbgrestartadmin())
+        GuiCloseApplication();
+    return true;
 }

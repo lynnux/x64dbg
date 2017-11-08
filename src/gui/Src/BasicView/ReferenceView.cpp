@@ -1,12 +1,13 @@
 #include <QHBoxLayout>
 #include <QMessageBox>
 #include <QLabel>
+#include <QTabWidget>
 #include "ReferenceView.h"
 #include "Configuration.h"
 #include "Bridge.h"
 #include "MiscUtil.h"
 
-ReferenceView::ReferenceView(bool sourceView, QWidget* parent) : SearchListView(true, parent)
+ReferenceView::ReferenceView(bool sourceView, QWidget* parent) : SearchListView(true, parent), mParent(dynamic_cast<QTabWidget*>(parent))
 {
     // Setup SearchListView settings
     mSearchStartCol = 1;
@@ -104,6 +105,9 @@ void ReferenceView::connectBridge()
     connect(Bridge::getBridge(), SIGNAL(referenceSetProgress(int)), this, SLOT(referenceSetProgressSlot(int)));
     connect(Bridge::getBridge(), SIGNAL(referenceSetCurrentTaskProgress(int, QString)), this, SLOT(referenceSetCurrentTaskProgressSlot(int, QString)));
     connect(Bridge::getBridge(), SIGNAL(referenceSetSearchStartCol(int)), this, SLOT(setSearchStartCol(int)));
+    connect(Bridge::getBridge(), SIGNAL(referenceAddCommand(QString, QString)), this, SLOT(addCommand(QString, QString)));
+    connect(this->mSearchList, SIGNAL(selectionChangedSignal(int)), this, SLOT(searchSelectionChanged(int)));
+    connect(this->mList, SIGNAL(selectionChangedSignal(int)), this, SLOT(searchSelectionChanged(int)));
 }
 
 void ReferenceView::disconnectBridge()
@@ -116,6 +120,9 @@ void ReferenceView::disconnectBridge()
     disconnect(Bridge::getBridge(), SIGNAL(referenceSetProgress(int)), mSearchTotalProgress, SLOT(setValue(int)));
     disconnect(Bridge::getBridge(), SIGNAL(referenceSetCurrentTaskProgress(int, QString)), this, SLOT(referenceSetCurrentTaskProgressSlot(int, QString)));
     disconnect(Bridge::getBridge(), SIGNAL(referenceSetSearchStartCol(int)), this, SLOT(setSearchStartCol(int)));
+    disconnect(Bridge::getBridge(), SIGNAL(referenceAddCommand(QString, QString)), this, SLOT(addCommand(QString, QString)));
+    disconnect(this->mSearchList, SIGNAL(selectionChangedSignal(int)), this, SLOT(searchSelectionChanged(int)));
+    disconnect(this->mList, SIGNAL(selectionChangedSignal(int)), this, SLOT(searchSelectionChanged(int)));
 }
 
 void ReferenceView::refreshShortcutsSlot()
@@ -138,6 +145,12 @@ void ReferenceView::referenceSetCurrentTaskProgressSlot(int progress, QString ta
     mSearchCurrentTaskProgress->setFormat(taskTitle + " " + QString::number(progress) + "%");
 }
 
+void ReferenceView::searchSelectionChanged(int index)
+{
+    DbgValToString("$__disasm_refindex", index);
+    DbgValToString("$__dump_refindex", index);
+}
+
 void ReferenceView::addColumnAt(int width, QString title)
 {
     int charwidth = mList->getCharWidth();
@@ -154,6 +167,8 @@ void ReferenceView::addColumnAt(int width, QString title)
 
 void ReferenceView::setRowCount(dsint count)
 {
+    if(!mList->getRowCount() && count) //from zero to N rows
+        searchSelectionChanged(0);
     emit mCountTotalLabel->setText(QString("%1").arg(count));
     mSearchBox->setText("");
     mList->setRowCount(count);
@@ -163,6 +178,12 @@ void ReferenceView::setCellContent(int r, int c, QString s)
 {
     mSearchBox->setText("");
     mList->setCellContent(r, c, s);
+}
+
+void ReferenceView::addCommand(QString title, QString command)
+{
+    mCommnadTitles.append(title);
+    mCommands.append(command);
 }
 
 void ReferenceView::reloadData()
@@ -194,31 +215,43 @@ void ReferenceView::referenceContextMenu(QMenu* wMenu)
     duint addr;
     if(!DbgFunctions()->ValFromString(text.toUtf8().constData(), &addr))
         return;
-    if(!DbgMemIsValidReadPtr(addr))
-        return;
-    wMenu->addAction(mFollowAddress);
-    wMenu->addAction(mFollowDumpAddress);
-    dsint apiaddr = apiAddressFromString(mCurList->getCellContent(mCurList->getInitialSelection(), 1));
-    if(apiaddr)
-        wMenu->addAction(mFollowApiAddress);
-    wMenu->addSeparator();
-    wMenu->addAction(mToggleBreakpoint);
-    wMenu->addAction(mSetBreakpointOnAllCommands);
-    wMenu->addAction(mRemoveBreakpointOnAllCommands);
-    if(apiaddr)
+    if(DbgMemIsValidReadPtr(addr))
     {
-        char label[MAX_LABEL_SIZE] = "";
-        if(DbgGetLabelAt(apiaddr, SEG_DEFAULT, label))
+        wMenu->addAction(mFollowAddress);
+        wMenu->addAction(mFollowDumpAddress);
+        dsint apiaddr = apiAddressFromString(mCurList->getCellContent(mCurList->getInitialSelection(), 1));
+        if(apiaddr)
+            wMenu->addAction(mFollowApiAddress);
+        wMenu->addSeparator();
+        wMenu->addAction(mToggleBreakpoint);
+        wMenu->addAction(mSetBreakpointOnAllCommands);
+        wMenu->addAction(mRemoveBreakpointOnAllCommands);
+        if(apiaddr)
         {
-            wMenu->addSeparator();
-            mSetBreakpointOnAllApiCalls->setText(tr("Set breakpoint on all calls to %1").arg(label));
-            wMenu->addAction(mSetBreakpointOnAllApiCalls);
-            mRemoveBreakpointOnAllApiCalls->setText(tr("Remove breakpoint on all calls to %1").arg(label));
-            wMenu->addAction(mRemoveBreakpointOnAllApiCalls);
+            char label[MAX_LABEL_SIZE] = "";
+            if(DbgGetLabelAt(apiaddr, SEG_DEFAULT, label))
+            {
+                wMenu->addSeparator();
+                mSetBreakpointOnAllApiCalls->setText(tr("Set breakpoint on all calls to %1").arg(label));
+                wMenu->addAction(mSetBreakpointOnAllApiCalls);
+                mRemoveBreakpointOnAllApiCalls->setText(tr("Remove breakpoint on all calls to %1").arg(label));
+                wMenu->addAction(mRemoveBreakpointOnAllApiCalls);
+            }
+        }
+        wMenu->addSeparator();
+        wMenu->addAction(mToggleBookmark);
+    }
+    if(this->mCommands.size() > 0)
+    {
+        wMenu->addSeparator();
+        for(auto i = 0; i < this->mCommnadTitles.size(); i++)
+        {
+            QAction* newCommandAction = new QAction(this->mCommnadTitles.at(i), wMenu);
+            newCommandAction->setData(QVariant(mCommands.at(i)));
+            connect(newCommandAction, SIGNAL(triggered()), this, SLOT(referenceExecCommand()));
+            wMenu->addAction(newCommandAction);
         }
     }
-    wMenu->addSeparator();
-    wMenu->addAction(mToggleBookmark);
 }
 
 void ReferenceView::followAddress()
@@ -245,7 +278,10 @@ void ReferenceView::followGenericAddress()
     if(DbgFunctions()->MemIsCodePage(addr, false))
         followAddress();
     else
+    {
         followDumpAddress();
+        emit Bridge::getBridge()->getDumpAttention();
+    }
 }
 
 void ReferenceView::setBreakpointAt(int row, BPSetAction action)
@@ -376,4 +412,35 @@ dsint ReferenceView::apiAddressFromString(const QString & s)
         match.remove(0, 1);
     duint value;
     return DbgFunctions()->ValFromString(match.toUtf8().constData(), &value) && DbgMemIsValidReadPtr(value) ? value : 0;
+}
+
+void ReferenceView::referenceExecCommand()
+{
+    QAction* act = qobject_cast<QAction*>(sender());
+    if(act != nullptr)
+    {
+        QString command = act->data().toString();
+        for(int selected : mCurList->getSelection()) //to do: enable multi-selection
+        {
+            QString specializedCommand = command;
+            for(int i = 0; i < mCurList->getColumnCount(); i++)
+            {
+                QString token = "$" + QString::number(i);
+                if(specializedCommand.contains(token))
+                    specializedCommand.replace(token, mCurList->getCellContent(selected, i));
+            }
+            DbgCmdExec(specializedCommand);
+        }
+    }
+}
+
+void ReferenceView::mouseReleaseEvent(QMouseEvent* event)
+{
+    if(mParent)
+    {
+        if(event->button() == Qt::ForwardButton)
+            mParent->setCurrentIndex(std::min(mParent->currentIndex() + 1, mParent->count()));
+        else if(event->button() == Qt::BackButton)
+            mParent->setCurrentIndex(std::max(mParent->currentIndex() - 1, 0));
+    }
 }

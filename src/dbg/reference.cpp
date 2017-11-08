@@ -63,7 +63,7 @@ int RefFind(duint Address, duint Size, CBREF Callback, void* UserData, bool Sile
             sprintf_s(fullName, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "%s (Region %p)")), Name, scanStart);
 
         // Initialize disassembler
-        Capstone cp;
+        Zydis cp;
 
         // Allow an "initialization" notice
         refInfo.refcount = 0;
@@ -104,7 +104,7 @@ int RefFind(duint Address, duint Size, CBREF Callback, void* UserData, bool Sile
             sprintf_s(fullName, "%s (%p)", Name, scanStart);
 
         // Initialize disassembler
-        Capstone cp;
+        Zydis cp;
 
         // Allow an "initialization" notice
         refInfo.refcount = 0;
@@ -117,11 +117,26 @@ int RefFind(duint Address, duint Size, CBREF Callback, void* UserData, bool Sile
             GuiReferenceSetProgress(percent);
         }, disasmText);
     }
-    else if(type == ALL_MODULES)  // Search in all Modules
+    else if(type == ALL_MODULES) // Search in all Modules
     {
         bool initCallBack = true;
-        std::vector<MODINFO> modList;
-        ModGetList(modList);
+
+        struct RefModInfo
+        {
+            duint base;
+            duint size;
+            char name[MAX_MODULE_SIZE];
+        };
+        std::vector<RefModInfo> modList;
+        ModEnum([&modList](const MODINFO & mod)
+        {
+            RefModInfo info;
+            info.base = mod.base;
+            info.size = mod.size;
+            strncpy_s(info.name, mod.name, _TRUNCATE);
+            strncat_s(info.name, mod.extension, _TRUNCATE);
+            modList.push_back(info);
+        });
 
         if(!modList.size())
         {
@@ -132,7 +147,7 @@ int RefFind(duint Address, duint Size, CBREF Callback, void* UserData, bool Sile
         }
 
         // Initialize disassembler
-        Capstone cp;
+        Zydis cp;
 
         // Determine the full module
         sprintf_s(fullName, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "All Modules (%s)")), Name);
@@ -157,9 +172,6 @@ int RefFind(duint Address, duint Size, CBREF Callback, void* UserData, bool Sile
 
                 int totalPercent = (int)floor(fTotalPercent * 100.f);
 
-                char tst[256];
-                strcpy_s(tst, modList[i].name);
-
                 GuiReferenceSetCurrentTaskProgress(percent, modList[i].name);
                 GuiReferenceSetProgress(totalPercent);
             }, disasmText);
@@ -173,18 +185,13 @@ int RefFind(duint Address, duint Size, CBREF Callback, void* UserData, bool Sile
     return refInfo.refcount;
 }
 
-int RefFindInRange(duint scanStart, duint scanSize, CBREF Callback, void* UserData, bool Silent, REFINFO & refInfo, Capstone & cp, bool initCallBack, const CBPROGRESS & cbUpdateProgress, bool disasmText)
+int RefFindInRange(duint scanStart, duint scanSize, CBREF Callback, void* UserData, bool Silent, REFINFO & refInfo, Zydis & cp, bool initCallBack, const CBPROGRESS & cbUpdateProgress, bool disasmText)
 {
     // Allocate and read a buffer from the remote process
     Memory<unsigned char*> data(scanSize, "reffind:data");
 
-    if(!MemRead(scanStart, data(), scanSize))
-    {
-        if(!Silent)
-            dprintf(QT_TRANSLATE_NOOP("DBG", "Error reading memory in reference search\n"));
-
-        return 0;
-    }
+    memset(data(), 0xCC, data.size());
+    MemReadDumb(scanStart, data(), scanSize);
 
     if(initCallBack)
         Callback(0, 0, &refInfo);

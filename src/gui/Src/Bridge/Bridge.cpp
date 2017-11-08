@@ -14,25 +14,35 @@ static Bridge* mBridge;
 ************************************************************************************/
 Bridge::Bridge(QObject* parent) : QObject(parent)
 {
-    mBridgeMutex = new QMutex();
-    winId = 0;
-    scriptView = 0;
-    referenceManager = 0;
-    bridgeResult = 0;
-    hResultEvent = CreateEventW(nullptr, true, true, nullptr);
-    dbgStopped = false;
+    InitializeCriticalSection(&csBridge);
+    hResultEvent = CreateEventW(nullptr, true, true, nullptr);;
+    dwMainThreadId = GetCurrentThreadId();
 }
 
 Bridge::~Bridge()
 {
     CloseHandle(hResultEvent);
-    delete mBridgeMutex;
+    EnterCriticalSection(&csBridge);
+    DeleteCriticalSection(&csBridge);
 }
 
 void Bridge::CopyToClipboard(const QString & text)
 {
+    if(!text.length())
+        return;
     QClipboard* clipboard = QApplication::clipboard();
     clipboard->setText(text);
+    GuiAddStatusBarMessage(tr("The data has been copied to clipboard.\n").toUtf8().constData());
+}
+
+void Bridge::CopyToClipboard(const QString & text, const QString & htmlText)
+{
+    QMimeData* mimeData = new QMimeData();
+    mimeData->setData("text/html", htmlText.toUtf8()); // Set text/html data
+    mimeData->setData("text/plain", text.toUtf8());  //Set text/plain data
+    //Reason not using setText() or setHtml():Don't support storing multiple data in one QMimeData
+    QApplication::clipboard()->setMimeData(mimeData); //Copy the QMimeData with text and html data
+    GuiAddStatusBarMessage(tr("The data has been copied to clipboard.\n").toUtf8().constData());
 }
 
 void Bridge::setResult(dsint result)
@@ -57,11 +67,6 @@ void Bridge::initBridge()
 /************************************************************************************
                             Helper Functions
 ************************************************************************************/
-
-void Bridge::emitLoadSourceFile(const QString path, int line, int selection)
-{
-    emit loadSourceFile(path, line, selection);
-}
 
 void Bridge::emitMenuAddToList(QWidget* parent, QMenu* menu, int hMenu, int hParentMenu)
 {
@@ -90,13 +95,15 @@ void* Bridge::processMessage(GUIMSG type, void* param1, void* param2)
         break;
 
     case GUI_SET_DEBUG_STATE:
-        emit dbgStateChanged((DBGSTATE)(dsint)param1);
+        mIsRunning = DBGSTATE(duint(param1)) == running;
+        if(!param2)
+            emit dbgStateChanged((DBGSTATE)(dsint)param1);
         break;
 
     case GUI_ADD_MSG_TO_LOG:
     {
         auto msg = (const char*)param1;
-        emit addMsgToLog(QByteArray(msg, strlen(msg) + 1)); //Speed up performance: don't convert to UCS-2 QString
+        emit addMsgToLog(QByteArray(msg, int(strlen(msg)) + 1)); //Speed up performance: don't convert to UCS-2 QString
     }
     break;
 
@@ -196,7 +203,8 @@ void* Bridge::processMessage(GUIMSG type, void* param1, void* param2)
         break;
 
     case GUI_REF_ADDCOLUMN:
-        emit referenceAddColumnAt((int)param1, QString((const char*)param2));
+        if(referenceManager->currentReferenceView())
+            referenceManager->currentReferenceView()->addColumnAt((int)param1, QString((const char*)param2));
         break;
 
     case GUI_REF_SETROWCOUNT:
@@ -204,7 +212,14 @@ void* Bridge::processMessage(GUIMSG type, void* param1, void* param2)
         break;
 
     case GUI_REF_GETROWCOUNT:
-        return (void*)referenceManager->currentReferenceView()->mList->getRowCount();
+        if(referenceManager->currentReferenceView())
+            return (void*)referenceManager->currentReferenceView()->mList->getRowCount();
+        return 0;
+
+    case GUI_REF_SEARCH_GETROWCOUNT:
+        if(referenceManager->currentReferenceView())
+            return (void*)referenceManager->currentReferenceView()->mCurList->getRowCount();
+        return 0;
 
     case GUI_REF_DELETEALLCOLUMNS:
         GuiReferenceInitialize(tr("References").toUtf8().constData());
@@ -218,7 +233,26 @@ void* Bridge::processMessage(GUIMSG type, void* param1, void* param2)
     break;
 
     case GUI_REF_GETCELLCONTENT:
-        return (void*)referenceManager->currentReferenceView()->mList->getCellContent((int)param1, (int)param2).toUtf8().constData();
+    {
+        QString content;
+        if(referenceManager->currentReferenceView())
+            content = referenceManager->currentReferenceView()->mList->getCellContent((int)param1, (int)param2);
+        auto bytes = content.toUtf8();
+        auto data = BridgeAlloc(bytes.size() + 1);
+        memcpy(data, bytes.constData(), bytes.size());
+        return data;
+    }
+
+    case GUI_REF_SEARCH_GETCELLCONTENT:
+    {
+        QString content;
+        if(referenceManager->currentReferenceView())
+            content = referenceManager->currentReferenceView()->mCurList->getCellContent((int)param1, (int)param2);
+        auto bytes = content.toUtf8();
+        auto data = BridgeAlloc(bytes.size() + 1);
+        memcpy(data, bytes.constData(), bytes.size());
+        return data;
+    }
 
     case GUI_REF_RELOADDATA:
         emit referenceReloadData();
@@ -318,7 +352,15 @@ void* Bridge::processMessage(GUIMSG type, void* param1, void* param2)
     case GUI_MENU_CLEAR:
     {
         BridgeResult result;
-        emit menuClearMenu((int)param1);
+        emit menuClearMenu((int)param1, false);
+        result.Wait();
+    }
+    break;
+
+    case GUI_MENU_REMOVE:
+    {
+        BridgeResult result;
+        emit menuRemoveMenuEntry((int)param1);
         result.Wait();
     }
     break;
@@ -444,7 +486,7 @@ void* Bridge::processMessage(GUIMSG type, void* param1, void* param2)
         break;
 
     case GUI_LOAD_SOURCE_FILE:
-        emitLoadSourceFile(QString((const char*)param1), (int)param2);
+        emit loadSourceFile(QString((const char*)param1), (int)param2, 0);
         break;
 
     case GUI_MENU_SET_ICON:
@@ -487,6 +529,38 @@ void* Bridge::processMessage(GUIMSG type, void* param1, void* param2)
     {
         BridgeResult result;
         emit setCheckedMenuEntry(int(param1), bool(param2));
+        result.Wait();
+    }
+    break;
+
+    case GUI_MENU_SET_VISIBLE:
+    {
+        BridgeResult result;
+        emit setVisibleMenu(int(param1), bool(param2));
+        result.Wait();
+    }
+    break;
+
+    case GUI_MENU_SET_ENTRY_VISIBLE:
+    {
+        BridgeResult result;
+        emit setVisibleMenuEntry(int(param1), bool(param2));
+        result.Wait();
+    }
+    break;
+
+    case GUI_MENU_SET_NAME:
+    {
+        BridgeResult result;
+        emit setNameMenu(int(param1), QString((const char*)param2));
+        result.Wait();
+    }
+    break;
+
+    case GUI_MENU_SET_ENTRY_NAME:
+    {
+        BridgeResult result;
+        emit setNameMenuEntry(int(param1), QString((const char*)param2));
         result.Wait();
     }
     break;
@@ -608,7 +682,7 @@ void* Bridge::processMessage(GUIMSG type, void* param1, void* param2)
     {
         BridgeResult result;
         emit loadGraph((BridgeCFGraphList*)param1, duint(param2));
-        result.Wait();
+        return (void*)result.Wait();
     }
     break;
 
@@ -696,10 +770,8 @@ void* Bridge::processMessage(GUIMSG type, void* param1, void* param2)
     break;
 
     case GUI_PROCESS_EVENTS:
-    {
         QCoreApplication::processEvents();
-    }
-    break;
+        break;
 
     case GUI_TYPE_ADDNODE:
     {
@@ -718,13 +790,65 @@ void* Bridge::processMessage(GUIMSG type, void* param1, void* param2)
     break;
 
     case GUI_UPDATE_TYPE_WIDGET:
-    {
         emit typeUpdateWidget();
+        break;
+
+    case GUI_CLOSE_APPLICATION:
+        emit closeApplication();
+        break;
+
+    case GUI_FLUSH_LOG:
+        emit flushLog();
+        break;
+
+    case GUI_MENU_SET_ENTRY_HOTKEY:
+    {
+        BridgeResult result;
+        auto params = QString((const char*)param2).split('\1');
+        if(params.length() == 2)
+        {
+            emit setHotkeyMenuEntry(int(param1), params[0], params[1]);
+            result.Wait();
+        }
     }
     break;
+
+    case GUI_REF_ADDCOMMAND:
+    {
+        if(param1 == nullptr && param2 == nullptr)
+            return nullptr;
+        else if(param1 == nullptr)
+            emit referenceAddCommand(QString::fromUtf8((const char*)param2), QString::fromUtf8((const char*)param2));
+        else
+            emit referenceAddCommand(QString::fromUtf8((const char*)param1), QString::fromUtf8((const char*)param2));
+    }
+    break;
+
+    case GUI_OPEN_TRACE_FILE:
+    {
+        if(param1 == nullptr)
+            return nullptr;
+        emit openTraceFile(QString::fromUtf8((const char*)param1));
+    }
+    break;
+
+    case GUI_UPDATE_TRACE_BROWSER:
+        emit updateTraceBrowser();
+        break;
+
     }
 
     return nullptr;
+}
+
+void DbgCmdExec(const QString & cmd)
+{
+    DbgCmdExec(cmd.toUtf8().constData());
+}
+
+bool DbgCmdExecDirect(const QString & cmd)
+{
+    return DbgCmdExecDirect(cmd.toUtf8().constData());
 }
 
 /************************************************************************************
