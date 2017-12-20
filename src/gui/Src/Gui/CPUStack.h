@@ -2,12 +2,15 @@
 #define CPUSTACK_H
 
 #include "HexDump.h"
+#include "MultiItemsSelectWindow.h"
+#include <QVector>
+#include <QPair>
 
 //forward declaration
 class CPUMultiDump;
 class GotoDialog;
 
-class CPUStack : public HexDump
+class CPUStack : public HexDump, public MultiItemsDataProvider
 {
     Q_OBJECT
 public:
@@ -73,6 +76,14 @@ public slots:
     void followInMemoryMapSlot();
     void followInDumpSlot();
     void updateSlot();
+    void followInDisasmPopupSlot();
+    void followInDumpPopupSlot();
+
+private:
+    const QList<MIDPKey> MIDP_getItems() override;
+    QString MIDP_getItemName(MIDPKey index) override;
+    void MIDP_selected(MIDPKey index) override;
+    QIcon MIDP_getIcon(MIDPKey index) override;
 
 private:
     duint mCsp;
@@ -100,6 +111,11 @@ private:
 
     std::vector<CPUCallStack> mCallstack;
     static int CPUStack::getCurrentFrame(const std::vector<CPUStack::CPUCallStack> & mCallstack, duint wVA);
+
+    MultiItemsSelectWindow* mFollowInPopupWindow = nullptr;
+    int mFollowInTarget = 0; // 0: GUI_DISASSEMBLY, 1: GUI_DUMP
+    QVector<QPair<QString, QString>> mFollowToData; // QPair<show name, command>
+
 };
 
 #endif // CPUSTACK_H
