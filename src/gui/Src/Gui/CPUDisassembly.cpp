@@ -1825,6 +1825,8 @@ void CPUDisassembly::addFollowInPopupDataItem(QString name, dsint value, bool is
 void CPUDisassembly::setupFollowInPopupData(bool isFollowInCPU)
 {
     auto wVA = rvaToVa(getInitialSelection());
+    if(!isFollowInCPU)
+        addFollowInPopupDataItem(tr("Selected Address"), wVA, isFollowInCPU);
     DISASM_INSTR instr;
     DbgDisasmAt(wVA, &instr);
     for(int i = 0; i < instr.argcount; i++)
