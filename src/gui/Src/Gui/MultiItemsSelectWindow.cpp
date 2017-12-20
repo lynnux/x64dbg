@@ -13,7 +13,7 @@ enum class Role
     ItemData = Qt::UserRole
 };
 
-MultiItemsSelectWindow::MultiItemsSelectWindow(MultiItemsDataProvider* hp, QWidget* parent, bool showIcon) :
+MultiItemsSelectWindow::MultiItemsSelectWindow(MultiItemsDataProvider* hp, QWidget* parent, bool showIcon, std::function<void(MultiItemsSelectWindow*)> init_cb) :
     QFrame(parent, Qt::Popup),
     mDataProvider(hp),
     mShowIcon(showIcon),
@@ -37,10 +37,13 @@ MultiItemsSelectWindow::MultiItemsSelectWindow(MultiItemsDataProvider* hp, QWidg
     connect(mEditorList, &QTreeWidget::itemClicked,
             this, &MultiItemsSelectWindow::editorClicked);
 
+    if(init_cb)
+        init_cb(this);
+
     setVisible(false);
 }
 
-void MultiItemsSelectWindow::gotoNextItem()
+void MultiItemsSelectWindow::gotoNextItem(bool autoNextWhenInit)
 {
     if(isVisible())
     {
@@ -49,7 +52,8 @@ void MultiItemsSelectWindow::gotoNextItem()
     else
     {
         addItems();
-        selectPreviousEditor();
+        if(autoNextWhenInit)
+            selectPreviousEditor();
         showPopupOrSelectDocument();
     }
 }
@@ -202,7 +206,7 @@ void MultiItemsSelectWindow::selectNextEditor()
 void MultiItemsSelectWindow::addItems()
 {
     mEditorList->clear();
-    auto & history = mDataProvider->MIDP_getItems();
+    auto history = mDataProvider->MIDP_getItems();
     for(auto & i : history)
     {
         addItem(i);

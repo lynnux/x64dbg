@@ -7,6 +7,7 @@
 #include <QIcon>
 #include <QList>
 #include <QTreeWidget>
+#include <functional>
 
 QT_BEGIN_NAMESPACE
 class QTreeWidgetItem;
@@ -18,7 +19,7 @@ typedef void* MIDPKey;
 class MultiItemsDataProvider
 {
 public:
-    virtual const QList<MIDPKey> & MIDP_getItems() const = 0;
+    virtual const QList<MIDPKey> MIDP_getItems() = 0;
     virtual QString MIDP_getItemName(MIDPKey index) = 0;
     virtual QIcon MIDP_getIcon(MIDPKey index) = 0;
     virtual void MIDP_selected(MIDPKey index) = 0;
@@ -28,9 +29,9 @@ class MultiItemsSelectWindow : public QFrame
 {
     Q_OBJECT
 public:
-    MultiItemsSelectWindow(MultiItemsDataProvider* hp, QWidget* parent, bool showIcon);
+    MultiItemsSelectWindow(MultiItemsDataProvider* hp, QWidget* parent, bool showIcon, std::function<void(MultiItemsSelectWindow*)> = nullptr);
 
-    void gotoNextItem();
+    void gotoNextItem(bool autoNextWhenInit = true);
     void gotoPreviousItem();
 
 private slots:

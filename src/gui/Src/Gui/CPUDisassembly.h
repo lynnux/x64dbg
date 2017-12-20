@@ -3,13 +3,17 @@
 
 #include "Disassembly.h"
 #include "BreakpointMenu.h"
+#include "MultiItemsSelectWindow.h"
+#include <QVector>
+#include <QPair>
 
 // Needed forward declaration for parent container class
 class CPUWidget;
 class GotoDialog;
 class XrefBrowseDialog;
+class MultiItemsSelectWindow;
 
-class CPUDisassembly : public Disassembly
+class CPUDisassembly : public Disassembly, public MultiItemsDataProvider
 {
     Q_OBJECT
 
@@ -115,9 +119,15 @@ public slots:
     void copyTokenValueSlot();
     void followInMemoryMapSlot();
     void downloadCurrentSymbolsSlot();
+    void followInDisasmPopupSlot();
+    void followInDumpPopupSlot();
 
 protected:
     void paintEvent(QPaintEvent* event);
+    const QList<MIDPKey> MIDP_getItems() override;
+    QString MIDP_getItemName(MIDPKey index) override;
+    void MIDP_selected(MIDPKey index) override;
+    QIcon MIDP_getIcon(MIDPKey index) override;
 
 private:
     bool getLabelsFromInstruction(duint addr, QSet<QString> & labels);
@@ -172,6 +182,9 @@ private:
     MenuBuilder* mHighlightMenuBuilder;
     bool mHighlightContextMenu = false;
     BreakpointMenu* mBreakpointMenu;
+    MultiItemsSelectWindow* mFollowInPopupWindow = nullptr;
+    int mFollowInTarget = 0; // 0: GUI_DISASSEMBLY, 1: GUI_DUMP
+    QVector<QPair<QString, QString>> mFollowToData; // QPair<show name, command>
 };
 
 #endif // CPUDISASSEMBLY_H

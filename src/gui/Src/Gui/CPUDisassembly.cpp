@@ -46,7 +46,6 @@ CPUDisassembly::CPUDisassembly(CPUWidget* parent) : Disassembly(parent)
     connect(this, SIGNAL(selectionExpanded()), this, SLOT(selectionUpdatedSlot()));
     connect(Bridge::getBridge(), SIGNAL(displayWarning(QString, QString)), this, SLOT(displayWarningSlot(QString, QString)));
     connect(Bridge::getBridge(), SIGNAL(focusDisasm()), this, SLOT(setFocus()));
-
     Initialize();
 }
 
@@ -669,6 +668,32 @@ void CPUDisassembly::setupRightClickContextMenu()
         if(!getTokenValueText(text))
             return false;
         return text != mHighlightToken.text;
+    });
+
+    // popup a window to follow in disam/dump, not have a entry in menu
+    makeShortcutAction(DIcon(ArchValue("processor32.png", "processor64.png")), tr("Popup Window to Follow in Disassembler"), SLOT(followInDisasmPopupSlot()), "ActionFollowDisasmPopup");
+    makeShortcutAction(DIcon(ArchValue("processor32.png", "processor64.png")), tr("Popup Window to Follow in Dump"), SLOT(followInDumpPopupSlot()), "ActionFollowDumpPopup");
+    // Because the shortcut are not global, we need register shortcut in MultiItemsSelectWindow to continue select
+    mFollowInPopupWindow = new MultiItemsSelectWindow(this, this, false, [](MultiItemsSelectWindow * mw)
+    {
+        {
+            auto actionNext = new QAction(tr("Popup Window to Follow in Disassembler"), mw);
+            actionNext->setShortcut(ConfigShortcut("ActionFollowDisasmPopup"));
+            mw->connect(actionNext, &QAction::triggered, [mw](bool)
+            {
+                mw->gotoNextItem();
+            });
+            mw->addAction(actionNext);
+        }
+        {
+            auto actionNext = new QAction(tr("Popup Window to Follow in Dump"), mw);
+            actionNext->setShortcut(ConfigShortcut("ActionFollowDumpPopup"));
+            mw->connect(actionNext, &QAction::triggered, [mw](bool)
+            {
+                mw->gotoNextItem();
+            });
+            mw->addAction(actionNext);
+        }
     });
 
     mMenuBuilder->loadFromConfig();
@@ -1789,6 +1814,46 @@ void CPUDisassembly::paintEvent(QPaintEvent* event)
     Disassembly::paintEvent(event);
 }
 
+const QList<MIDPKey> CPUDisassembly::MIDP_getItems()
+{
+    mFollowToData.clear();
+    if(mFollowInTarget == GUI_DISASSEMBLY)
+    {
+        mFollowToData.push_back(QPair<QString, QString>("cpu1", ""));
+        mFollowToData.push_back(QPair<QString, QString>("cpu2", ""));
+    }
+    else if(mFollowInTarget == GUI_DUMP)
+    {
+        mFollowToData.push_back(QPair<QString, QString>("dump1", ""));
+        mFollowToData.push_back(QPair<QString, QString>("dump2", ""));
+    }
+
+    QList<MIDPKey> ret;
+    for(auto i = 0; i < mFollowToData.size(); ++i)
+    {
+        ret.push_back((MIDPKey)i);
+    }
+    return ret;
+}
+
+QString CPUDisassembly::MIDP_getItemName(MIDPKey index)
+{
+    if((int)index >= mFollowToData.size())
+        return "";
+    else
+        return mFollowToData[(int)index].first;
+}
+
+void CPUDisassembly::MIDP_selected(MIDPKey index)
+{
+    int i = 0;
+}
+
+QIcon CPUDisassembly::MIDP_getIcon(MIDPKey index)
+{
+    return QIcon();
+}
+
 bool CPUDisassembly::getLabelsFromInstruction(duint addr, QSet<QString> & labels)
 {
     BASIC_INSTRUCTION_INFO basicinfo;
@@ -2043,6 +2108,18 @@ void CPUDisassembly::downloadCurrentSymbolsSlot()
     char module[MAX_MODULE_SIZE] = "";
     if(DbgGetModuleAt(rvaToVa(getInitialSelection()), module))
         DbgCmdExec(QString("symdownload \"%0\"").arg(module).toUtf8().constData());
+}
+
+void CPUDisassembly::followInDisasmPopupSlot()
+{
+    mFollowInTarget = GUI_DISASSEMBLY;
+    mFollowInPopupWindow->gotoNextItem(false);
+}
+
+void CPUDisassembly::followInDumpPopupSlot()
+{
+    mFollowInTarget = GUI_DUMP;
+    mFollowInPopupWindow->gotoNextItem(false);
 }
 
 void CPUDisassembly::ActionTraceRecordToggleRunTraceSlot()
