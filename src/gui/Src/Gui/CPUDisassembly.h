@@ -11,7 +11,6 @@
 class CPUWidget;
 class GotoDialog;
 class XrefBrowseDialog;
-class MultiItemsSelectWindow;
 
 class CPUDisassembly : public Disassembly, public MultiItemsDataProvider
 {
@@ -134,6 +133,8 @@ private:
     bool getTokenValueText(QString & text);
 
     void pushSelectionInto(bool copyBytes, QTextStream & stream, QTextStream* htmlStream = nullptr);
+    void addFollowInPopupDataItem(QString name, dsint value, bool isFollowInCPU);
+    void setupFollowInPopupData(bool isFollowInCPU);
 
     // Menus
     QMenu* mHwSlotSelectMenu;

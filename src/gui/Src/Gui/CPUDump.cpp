@@ -283,6 +283,32 @@ void CPUDump::setupContextMenu()
         return true;
     }));
 
+    // popup a window to follow in disam/dump, not have a entry in menu
+    makeShortcutAction(DIcon(ArchValue("processor32.png", "processor64.png")), tr("Popup Window to Follow in Disassembler"), SLOT(followInDisasmPopupSlot()), "ActionFollowDisasmPopup");
+    makeShortcutAction(DIcon(ArchValue("processor32.png", "processor64.png")), tr("Popup Window to Follow in Dump"), SLOT(followInDumpPopupSlot()), "ActionFollowDumpPopup");
+    // Because the shortcut are not global, we need register shortcut in MultiItemsSelectWindow to continue select
+    mFollowInPopupWindow = new MultiItemsSelectWindow(this, this, false, [](MultiItemsSelectWindow * mw)
+    {
+        {
+            auto actionNext = new QAction(tr("Popup Window to Follow in Disassembler"), mw);
+            actionNext->setShortcut(ConfigShortcut("ActionFollowDisasmPopup"));
+            mw->connect(actionNext, &QAction::triggered, [mw](bool)
+            {
+                mw->gotoNextItem();
+            });
+            mw->addAction(actionNext);
+        }
+        {
+            auto actionNext = new QAction(tr("Popup Window to Follow in Dump"), mw);
+            actionNext->setShortcut(ConfigShortcut("ActionFollowDumpPopup"));
+            mw->connect(actionNext, &QAction::triggered, [mw](bool)
+            {
+                mw->gotoNextItem();
+            });
+            mw->addAction(actionNext);
+        }
+    });
+
     mMenuBuilder->loadFromConfig();
     updateShortcuts();
 }
@@ -1729,6 +1755,82 @@ void CPUDump::setView(ViewEnum_t view)
         hexAsciiSlot();
         break;
     }
+}
+
+const QList<MIDPKey> CPUDump::MIDP_getItems()
+{
+    mFollowToData.clear();
+
+    auto wIsValidReadPtrCallback = [this]()
+    {
+        duint ptr = 0;
+        DbgMemRead(rvaToVa(getSelectionStart()), (unsigned char*)&ptr, sizeof(duint));
+        return DbgMemIsValidReadPtr(ptr);
+    };
+
+    if(mFollowInTarget == GUI_DISASSEMBLY)
+    {
+        mFollowToData.push_back(QPair<QString, QString>(tr("Follow in Disassembler"), QString("disasm " + ToPtrString(rvaToVa(getSelectionStart())))));
+        if(wIsValidReadPtrCallback())
+            mFollowToData.push_back(QPair<QString, QString>(ArchValue(tr("Follow DWORD in Disassembler"), tr("Follow QWORD in Disassembler"))
+                                    , QString("disasm \"[%1]\"").arg(ToPtrString(rvaToVa(getSelectionStart())))));
+    }
+    else if(mFollowInTarget == GUI_DUMP)
+    {
+        if(wIsValidReadPtrCallback())
+        {
+            mFollowToData.push_back(QPair<QString, QString>(ArchValue(tr("Follow DWORD in Current Dump"), tr("Follow QWORD in Current Dump"))
+                                    , QString("dump \"[%1]\"").arg(ToPtrString(rvaToVa(getSelectionStart())))));
+
+            QList<QString> tabNames;
+            mMultiDump->getTabNames(tabNames);
+            for(int i = 0; i < tabNames.length(); i++)
+            {
+                mFollowToData.push_back(QPair<QString, QString>(ArchValue(tr("Follow DWORD in "), tr("Follow QWORD in ")) + tabNames[i]
+                                        , QString("dump \"[%1]\", \"%2\"").arg(ToPtrString(rvaToVa(getSelectionStart()))).arg(i + 1)));
+            }
+        }
+    }
+
+    QList<MIDPKey> ret;
+    for(auto i = 0; i < mFollowToData.size(); ++i)
+    {
+        ret.push_back((MIDPKey)i);
+    }
+    return ret;
+}
+
+QString CPUDump::MIDP_getItemName(MIDPKey index)
+{
+    if((int)index >= mFollowToData.size())
+        return "";
+    else
+        return mFollowToData[(int)index].first;
+}
+
+void CPUDump::MIDP_selected(MIDPKey index)
+{
+    if((int)index >= mFollowToData.size())
+        return ;
+
+    DbgCmdExec(mFollowToData[(int)index].second.toUtf8().constData());
+}
+
+QIcon CPUDump::MIDP_getIcon(MIDPKey index)
+{
+    return QIcon();
+}
+
+void CPUDump::followInDisasmPopupSlot()
+{
+    mFollowInTarget = GUI_DISASSEMBLY;
+    mFollowInPopupWindow->gotoNextItem(false);
+}
+
+void CPUDump::followInDumpPopupSlot()
+{
+    mFollowInTarget = GUI_DUMP;
+    mFollowInPopupWindow->gotoNextItem(false);
 }
 
 void CPUDump::followInMemoryMapSlot()

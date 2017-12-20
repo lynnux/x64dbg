@@ -2,13 +2,16 @@
 #define CPUDUMP_H
 
 #include "HexDump.h"
+#include "MultiItemsSelectWindow.h"
+#include <QVector>
+#include <QPair>
 
 //forward declaration
 class CPUMultiDump;
 class CPUDisassembly;
 class GotoDialog;
 
-class CPUDump : public HexDump
+class CPUDump : public HexDump, public MultiItemsDataProvider
 {
     Q_OBJECT
 public:
@@ -111,6 +114,8 @@ public slots:
     void allocMemorySlot();
 
     void followInMemoryMapSlot();
+    void followInDisasmPopupSlot();
+    void followInDumpPopupSlot();
 
 private:
     MenuBuilder* mMenuBuilder;
@@ -124,6 +129,10 @@ private:
     CPUDisassembly* mDisas;
     CPUMultiDump* mMultiDump;
     int mAsciiSeparator = 0;
+
+    MultiItemsSelectWindow* mFollowInPopupWindow = nullptr;
+    int mFollowInTarget = 0; // 0: GUI_DISASSEMBLY, 1: GUI_DUMP
+    QVector<QPair<QString, QString>> mFollowToData; // QPair<show name, command>
 
     enum ViewEnum_t
     {
@@ -149,6 +158,11 @@ private:
     };
 
     void setView(ViewEnum_t view);
+
+    const QList<MIDPKey> MIDP_getItems() override;
+    QString MIDP_getItemName(MIDPKey index) override;
+    void MIDP_selected(MIDPKey index) override;
+    QIcon MIDP_getIcon(MIDPKey index) override;
 };
 
 #endif // CPUDUMP_H

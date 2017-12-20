@@ -1814,18 +1814,83 @@ void CPUDisassembly::paintEvent(QPaintEvent* event)
     Disassembly::paintEvent(event);
 }
 
+void CPUDisassembly::addFollowInPopupDataItem(QString name, dsint value, bool isFollowInCPU)
+{
+    if(isFollowInCPU)
+        mFollowToData.push_back(QPair<QString, QString>(name, QString("disasm ") + ToPtrString(value)));
+    else
+        mFollowToData.push_back(QPair<QString, QString>(name, QString().sprintf("dump \"%s\"", ToPtrString(value).toUtf8().constData())));
+}
+
+void CPUDisassembly::setupFollowInPopupData(bool isFollowInCPU)
+{
+    auto wVA = rvaToVa(getInitialSelection());
+    DISASM_INSTR instr;
+    DbgDisasmAt(wVA, &instr);
+    for(int i = 0; i < instr.argcount; i++)
+    {
+        const DISASM_ARG & arg = instr.arg[i];
+        if(arg.type == arg_memory)
+        {
+            QString segment = "";
+#ifdef _WIN64
+            if(arg.segment == SEG_GS)
+                segment = "gs:";
+#else //x32
+            if(arg.segment == SEG_FS)
+                segment = "fs:";
+#endif //_WIN64
+            if(arg.value != arg.constant)
+            {
+                if(DbgMemIsValidReadPtr(arg.value))
+                {
+                    addFollowInPopupDataItem(tr("Address: ") + segment + QString(arg.mnemonic).toUpper().trimmed(), arg.value, isFollowInCPU);
+                }
+            }
+            QString constant = ToHexString(arg.constant);
+            if(DbgMemIsValidReadPtr(arg.constant))
+                addFollowInPopupDataItem(tr("Constant: ") + constant, arg.constant, isFollowInCPU);
+            if(DbgMemIsValidReadPtr(arg.memvalue))
+            {
+                addFollowInPopupDataItem(tr("Value: ") + segment + "[" + QString(arg.mnemonic) + "]", arg.memvalue, isFollowInCPU);
+                //Check for switch statement
+                if(memcmp(instr.instruction, "jmp ", 4) == 0 && DbgMemIsValidReadPtr(arg.constant)) //todo: extend check for exact form "jmp [reg*4+disp]"
+                {
+                    duint* switchTable = new duint[512];
+                    memset(switchTable, 0, 512 * sizeof(duint));
+                    if(DbgMemRead(arg.constant, switchTable, 512 * sizeof(duint)))
+                    {
+                        int index;
+                        for(index = 0; index < 512; index++)
+                            if(!DbgFunctions()->MemIsCodePage(switchTable[index], false))
+                                break;
+                        if(index >= 2 && index < 512)
+                            for(int index2 = 0; index2 < index; index2++)
+                                addFollowInPopupDataItem(tr("Jump table%1: ").arg(index2) + ToHexString(switchTable[index2]), switchTable[index2], isFollowInCPU);
+                    }
+                    delete[] switchTable;
+                }
+            }
+
+        }
+        else //arg_normal
+        {
+            if(DbgMemIsValidReadPtr(arg.value))
+                addFollowInPopupDataItem(QString(arg.mnemonic).trimmed(), arg.value, isFollowInCPU);
+        }
+    }
+}
+
 const QList<MIDPKey> CPUDisassembly::MIDP_getItems()
 {
     mFollowToData.clear();
     if(mFollowInTarget == GUI_DISASSEMBLY)
     {
-        mFollowToData.push_back(QPair<QString, QString>("cpu1", ""));
-        mFollowToData.push_back(QPair<QString, QString>("cpu2", ""));
+        setupFollowInPopupData(true);
     }
     else if(mFollowInTarget == GUI_DUMP)
     {
-        mFollowToData.push_back(QPair<QString, QString>("dump1", ""));
-        mFollowToData.push_back(QPair<QString, QString>("dump2", ""));
+        setupFollowInPopupData(false);
     }
 
     QList<MIDPKey> ret;
@@ -1846,7 +1911,10 @@ QString CPUDisassembly::MIDP_getItemName(MIDPKey index)
 
 void CPUDisassembly::MIDP_selected(MIDPKey index)
 {
-    int i = 0;
+    if((int)index >= mFollowToData.size())
+        return ;
+
+    DbgCmdExec(mFollowToData[(int)index].second.toUtf8().constData());
 }
 
 QIcon CPUDisassembly::MIDP_getIcon(MIDPKey index)
