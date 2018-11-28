@@ -87,8 +87,8 @@ public slots:
     void copyAddressSlot();
     void copyRvaSlot();
     void copyFileOffsetSlot();
+    void copyHeaderVaSlot();
     void copyDisassemblySlot();
-    void copyDataSlot();
     void labelCopySlot();
     void findCommandSlot();
     void openSourceSlot();
@@ -110,7 +110,7 @@ public slots:
     void setEncodeTypeRangeSlot();
     void graphSlot();
     void analyzeModuleSlot();
-    void togglePreviewSlot();
+    //void togglePreviewSlot();
     void createThreadSlot();
     void copyTokenTextSlot();
     void copyTokenValueSlot();
@@ -118,7 +118,7 @@ public slots:
     void downloadCurrentSymbolsSlot();
 
 protected:
-    void paintEvent(QPaintEvent* event);
+    void paintEvent(QPaintEvent* event) override;
 
 private:
     bool getLabelsFromInstruction(duint addr, QSet<QString> & labels);

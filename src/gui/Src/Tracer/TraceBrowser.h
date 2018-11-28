@@ -14,12 +14,12 @@ class TraceBrowser : public AbstractTableView
     Q_OBJECT
 public:
     explicit TraceBrowser(QWidget* parent = 0);
-    ~TraceBrowser();
+    ~TraceBrowser() override;
 
-    QString paintContent(QPainter* painter, dsint rowBase, int rowOffset, int col, int x, int y, int w, int h);
+    QString paintContent(QPainter* painter, dsint rowBase, int rowOffset, int col, int x, int y, int w, int h) override;
 
-    void prepareData();
-    virtual void updateColors();
+    void prepareData() override;
+    void updateColors() override;
 
     void expandSelectionUpTo(duint to);
     void setSingleSelection(duint index);
@@ -32,33 +32,35 @@ private:
     void setupRightClickContextMenu();
     void makeVisible(duint index);
     QString getAddrText(dsint cur_addr, char label[MAX_LABEL_SIZE], bool getLabel);
-    QString getIndexText(duint index);
+    QString getIndexText(duint index) const;
+    RichTextPainter::List getRichBytes(const Instruction_t & instr) const;
     void pushSelectionInto(bool copyBytes, QTextStream & stream, QTextStream* htmlStream = nullptr);
     void copySelectionSlot(bool copyBytes);
     void copySelectionToFileSlot(bool copyBytes);
 
-    void contextMenuEvent(QContextMenuEvent* event);
-    void mousePressEvent(QMouseEvent* event);
-    void mouseMoveEvent(QMouseEvent* event);
-    void mouseDoubleClickEvent(QMouseEvent* event);
-    void keyPressEvent(QKeyEvent* event);
+    void contextMenuEvent(QContextMenuEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 
     VaHistory mHistory;
     MenuBuilder* mMenuBuilder;
     bool mRvaDisplayEnabled;
     duint mRvaDisplayBase;
 
-    typedef struct _SelectionData_t
+    struct SelectionData
     {
         duint firstSelectedIndex;
         duint fromIndex;
         duint toIndex;
-    } SelectionData_t;
+    };
 
-    SelectionData_t mSelection;
-    CapstoneTokenizer::SingleToken mHighlightToken;
+    SelectionData mSelection;
+    ZydisTokenizer::SingleToken mHighlightToken;
     bool mHighlightingMode;
     bool mPermanentHighlightingMode;
+    bool mAutoDisassemblyFollowSelection;
 
     TraceFileReader* mTraceFile;
     QBeaEngine* mDisasm;
@@ -97,16 +99,17 @@ private:
     QColor mAutoCommentBackgroundColor;
     QColor mCommentColor;
     QColor mCommentBackgroundColor;
+    QColor mDisassemblyRelocationUnderlineColor;
 
 signals:
     void displayReferencesWidget();
 
 public slots:
-
     void openFileSlot();
     void openSlot(const QString & fileName);
     void toggleRunTraceSlot();
     void closeFileSlot();
+    void closeDeleteSlot();
     void parseFinishedSlot();
     void tokenizerConfigUpdatedSlot();
 
@@ -131,6 +134,8 @@ public slots:
     void searchMemRefSlot();
 
     void updateSlot(); //debug
+
+    void toggleAutoDisassemblyFollowSelectionSlot();
 };
 
 #endif //TRACEBROWSER_H

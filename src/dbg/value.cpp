@@ -2028,6 +2028,7 @@ static bool startsWith(const char* pre, const char* str)
 #define XMM_PRE_FIELD_STRING "XMM"
 #define YMM_PRE_FIELD_STRING "YMM"
 #define x8780BITFPU_PRE_FIELD_STRING "x87r"
+#define x8780BITFPU_PRE_FIELD_STRING_ST "st"
 #define STRLEN_USING_SIZEOF(string) (sizeof(string) - 1)
 
 /**
@@ -2211,6 +2212,58 @@ static void setfpuvalue(const char* string, duint value)
         if(found)
             SetContextDataEx(hActiveThread, registerindex, value);
     }
+    else if(startsWith(x8780BITFPU_PRE_FIELD_STRING_ST, string))
+    {
+        flags = GetContextDataEx(hActiveThread, UE_X87_STATUSWORD);
+        flags >>= 11;
+        flags &= 7;
+        string += STRLEN_USING_SIZEOF(x8780BITFPU_PRE_FIELD_STRING_ST);
+        bool found = true;
+        DWORD registerindex;
+        switch(*string)
+        {
+        case '0':
+            registerindex = flags;
+            break;
+
+        case '1':
+            registerindex = ((1 + flags) & 7);
+            break;
+
+        case '2':
+            registerindex = ((2 + flags) & 7);
+            break;
+
+        case '3':
+            registerindex = ((3 + flags) & 7);
+            break;
+
+        case '4':
+            registerindex = ((4 + flags) & 7);
+            break;
+
+        case '5':
+            registerindex = ((5 + flags) & 7);
+            break;
+
+        case '6':
+            registerindex = ((6 + flags) & 7);
+            break;
+
+        case '7':
+            registerindex = ((7 + flags) & 7);
+            break;
+
+        default:
+            found = false;
+            break;
+        }
+        if(found)
+        {
+            registerindex += UE_x87_r0;
+            SetContextDataEx(hActiveThread, registerindex, value);
+        }
+    }
     else if(startsWith(MMX_PRE_FIELD_STRING, string))
     {
         string += STRLEN_USING_SIZEOF(MMX_PRE_FIELD_STRING);
@@ -2295,7 +2348,7 @@ static void setfpuvalue(const char* string, duint value)
         case 7:
             registerindex = UE_XMM7;
             break;
-
+#ifdef _WIN64
         case 8:
             registerindex = UE_XMM8;
             break;
@@ -2327,7 +2380,7 @@ static void setfpuvalue(const char* string, duint value)
         case 15:
             registerindex = UE_XMM15;
             break;
-
+#endif
         default:
             found = false;
             break;
@@ -2373,7 +2426,7 @@ static void setfpuvalue(const char* string, duint value)
         case 7:
             registerindex = UE_YMM7;
             break;
-
+#ifdef _WIN64
         case 8:
             registerindex = UE_YMM8;
             break;
@@ -2405,7 +2458,7 @@ static void setfpuvalue(const char* string, duint value)
         case 15:
             registerindex = UE_YMM15;
             break;
-
+#endif
         default:
             registerindex = 0;
             found = false;

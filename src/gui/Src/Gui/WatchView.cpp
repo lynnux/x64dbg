@@ -17,9 +17,9 @@ WatchView::WatchView(CPUMultiDump* parent) : StdTable(parent)
     connect(Bridge::getBridge(), SIGNAL(updateWatch()), this, SLOT(updateWatch()));
     connect(this, SIGNAL(contextMenuSignal(QPoint)), this, SLOT(contextMenuSlot(QPoint)));
 
-    updateColors();
     setupContextMenu();
     setDrawDebugOnly(true);
+    Initialize();
 }
 
 void WatchView::updateWatch()
@@ -51,7 +51,7 @@ void WatchView::updateWatch()
             break;
         case WATCHVARTYPE::TYPE_FLOAT:
             setCellContent(i, 3, "FLOAT");
-            setCellContent(i, 2, QString::number(*(float*)&WatchList[i].value));
+            setCellContent(i, 2, ToFloatString(&WatchList[i].value));
             break;
         case WATCHVARTYPE::TYPE_ASCII:
             setCellContent(i, 3, "ASCII");

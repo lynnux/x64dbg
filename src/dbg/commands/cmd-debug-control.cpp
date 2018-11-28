@@ -15,15 +15,17 @@
 #include "GetPeArch.h"
 #include "database.h"
 #include "exception.h"
+#include "stringformat.h"
 
 static bool skipInt3Stepping(int argc, char* argv[])
 {
-    if(!bSkipInt3Stepping || dbgisrunning())
+    if(!bSkipInt3Stepping || dbgisrunning() || getLastExceptionInfo().ExceptionRecord.ExceptionCode != EXCEPTION_BREAKPOINT)
         return false;
     duint cip = GetContextDataEx(hActiveThread, UE_CIP);
-    unsigned char ch;
-    MemRead(cip, &ch, sizeof(ch));
-    if(ch == 0xCC && getLastExceptionInfo().ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT)
+    unsigned char data[MAX_DISASM_BUFFER];
+    MemRead(cip, data, sizeof(data));
+    Zydis zydis;
+    if(zydis.Disassemble(cip, data) && zydis.IsInt3())
     {
         //Don't allow skipping of multiple consecutive INT3 instructions
         getLastExceptionInfo().ExceptionRecord.ExceptionCode = 0;
@@ -186,7 +188,8 @@ bool cbDebugStop(int argc, char* argv[])
         break;
 
         case WAIT_FAILED:
-            dprintf_untranslated("WAIT_FAILED, GetLastError() = %d (%s)\n", GetLastError(), ErrorCodeToName(GetLastError()).c_str());
+            String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+            dprintf_untranslated("WAIT_FAILED, GetLastError() = %s\n", error.c_str());
             return false;
         }
     }

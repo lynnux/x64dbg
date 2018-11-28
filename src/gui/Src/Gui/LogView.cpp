@@ -1,12 +1,18 @@
 #include "LogView.h"
 #include "Configuration.h"
 #include "Bridge.h"
-#include "BrowseDialog.h"
+
 #include <QRegularExpression>
 #include <QDesktopServices>
 #include <QClipboard>
 #include <QMimeData>
 #include <QTimer>
+#include <QApplication>
+#include <QContextMenuEvent>
+
+#include "BrowseDialog.h"
+#include "MiscUtil.h"
+#include "StringUtil.h"
 
 /**
  * @brief LogView::LogView The constructor constructs a rich text browser
@@ -84,12 +90,13 @@ void LogView::setupContextMenu()
     actionClear = setupAction(DIcon("eraser.png"), tr("Clea&r"), this, SLOT(clearLogSlot()));
     actionCopy = setupAction(DIcon("copy.png"), tr("&Copy"), this, SLOT(copy()));
     actionPaste = setupAction(DIcon("binary_paste.png"), tr("&Paste"), this, SLOT(pasteSlot()));
-    actionSelectAll = setupAction(tr("Select &All"), this, SLOT(selectAll()));
+    actionSelectAll = setupAction(DIcon("copy_full_table.png"), tr("Select &All"), this, SLOT(selectAll()));
     actionSave = setupAction(DIcon("binary_save.png"), tr("&Save"), this, SLOT(saveSlot()));
-    actionToggleLogging = setupAction(tr("Disable &Logging"), this, SLOT(toggleLoggingSlot()));
-    actionRedirectLog = setupAction(tr("&Redirect Log..."), this, SLOT(redirectLogSlot()));
+    actionToggleLogging = setupAction(DIcon("lock.png"), tr("Disable &Logging"), this, SLOT(toggleLoggingSlot()));
+    actionRedirectLog = setupAction(DIcon("database-export.png"), tr("&Redirect Log..."), this, SLOT(redirectLogSlot()));
     actionAutoScroll = setupAction(tr("Auto Scrolling"), this, SLOT(autoScrollSlot()));
     menuCopyToNotes = new QMenu(tr("Copy To Notes"), this);
+    menuCopyToNotes->setIcon(DIcon("notes.png"));
     actionCopyToGlobalNotes = new QAction(tr("&Global"), menuCopyToNotes);
     actionCopyToDebuggeeNotes = new QAction(tr("&Debuggee"), menuCopyToNotes);
     connect(actionCopyToGlobalNotes, SIGNAL(triggered()), this, SLOT(copyToGlobalNotes()));
@@ -105,6 +112,7 @@ void LogView::setupContextMenu()
 
 void LogView::refreshShortcutsSlot()
 {
+    actionClear->setShortcut(ConfigShortcut("ActionClear"));
     actionCopy->setShortcut(ConfigShortcut("ActionCopy"));
     actionToggleLogging->setShortcut(ConfigShortcut("ActionToggleLogging"));
     actionRedirectLog->setShortcut(ConfigShortcut("ActionRedirectLog"));
@@ -339,11 +347,11 @@ void LogView::setLoggingEnabled(bool enabled)
     if(enabled)
     {
         loggingEnabled = true;
-        GuiAddLogMessage(tr("Logging will be enabled.\n").toUtf8().constData());
+        GuiAddStatusBarMessage(tr("Logging will be enabled.\n").toUtf8().constData());
     }
     else
     {
-        GuiAddLogMessage(tr("Logging will be disabled.\n").toUtf8().constData());
+        GuiAddStatusBarMessage(tr("Logging will be disabled.\n").toUtf8().constData());
         loggingEnabled = false;
     }
 }

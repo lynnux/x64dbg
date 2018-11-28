@@ -2,6 +2,8 @@
 #include "ui_EditFloatRegister.h"
 #include "Bridge.h"
 #include "StringUtil.h"
+#include "MiscUtil.h"
+#include "Configuration.h"
 
 /**
  * @brief       Initialize EditFloatRegister dialog
@@ -361,7 +363,7 @@ void EditFloatRegister::reloadFloatData(QLineEdit & txtbox, char* Data)
 {
     if(mutex != &txtbox)
     {
-        txtbox.setText(QString().number(*(float*)Data));
+        txtbox.setText(ToFloatString(Data));
     }
 }
 
@@ -369,7 +371,7 @@ void EditFloatRegister::reloadDoubleData(QLineEdit & txtbox, char* Data)
 {
     if(mutex != &txtbox)
     {
-        txtbox.setText(QString().number(*(double*)Data));
+        txtbox.setText(ToDoubleString(Data));
     }
 }
 

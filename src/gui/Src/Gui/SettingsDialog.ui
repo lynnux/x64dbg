@@ -33,7 +33,7 @@
       <bool>true</bool>
      </property>
      <property name="currentIndex">
-      <number>4</number>
+      <number>0</number>
      </property>
      <widget class="QWidget" name="tabEvents">
       <attribute name="title">
@@ -689,6 +689,13 @@
         <widget class="QCheckBox" name="chkShowGraphRva">
          <property name="text">
           <string>Show RVA addresses in graph view</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkGraphZoomMode">
+         <property name="text">
+          <string>Graph zoom mode (beta)</string>
          </property>
         </widget>
        </item>

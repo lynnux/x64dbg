@@ -31,6 +31,8 @@ TraceBrowser::TraceBrowser(QWidget* parent) : AbstractTableView(parent)
     mRvaDisplayBase = 0;
     mRvaDisplayEnabled = false;
 
+    mAutoDisassemblyFollowSelection = false;
+
     int maxModuleSize = (int)ConfigUint("Disassembler", "MaxModuleSize");
     mDisasm = new QBeaEngine(maxModuleSize);
     mHighlightingMode = false;
@@ -101,6 +103,46 @@ QString TraceBrowser::getAddrText(dsint cur_addr, char label[MAX_LABEL_SIZE], bo
     return addrText;
 }
 
+//The following function is modified from "RichTextPainter::List Disassembly::getRichBytes(const Instruction_t & instr) const"
+//with patch and code folding features removed.
+RichTextPainter::List TraceBrowser::getRichBytes(const Instruction_t & instr) const
+{
+    RichTextPainter::List richBytes;
+    std::vector<std::pair<size_t, bool>> realBytes;
+    formatOpcodeString(instr, richBytes, realBytes);
+    const duint cur_addr = instr.rva;
+
+    if(!richBytes.empty() && richBytes.back().text.endsWith(' '))
+        richBytes.back().text.chop(1); //remove trailing space if exists
+
+    if(DbgIsDebugging())
+    {
+        for(size_t i = 0; i < richBytes.size(); i++)
+        {
+            auto byteIdx = realBytes[i].first;
+            auto isReal = realBytes[i].second;
+            RichTextPainter::CustomRichText_t & curByte = richBytes.at(i);
+            DBGRELOCATIONINFO relocInfo;
+            curByte.highlightColor = mDisassemblyRelocationUnderlineColor;
+            if(DbgFunctions()->ModRelocationAtAddr(cur_addr + byteIdx, &relocInfo))
+            {
+                bool prevInSameReloc = relocInfo.rva < cur_addr + byteIdx - DbgFunctions()->ModBaseFromAddr(cur_addr + byteIdx);
+                curByte.highlight = isReal;
+                curByte.highlightConnectPrev = i > 0 && prevInSameReloc;
+            }
+            else
+            {
+                curByte.highlight = false;
+                curByte.highlightConnectPrev = false;
+            }
+
+            curByte.textColor = mBytesColor;
+            curByte.textBackground = mBytesBackgroundColor;
+        }
+    }
+    return richBytes;
+}
+
 QString TraceBrowser::paintContent(QPainter* painter, dsint rowBase, int rowOffset, int col, int x, int y, int w, int h)
 {
     if(!mTraceFile || mTraceFile->Progress() != 100)
@@ -132,7 +174,7 @@ QString TraceBrowser::paintContent(QPainter* painter, dsint rowBase, int rowOffs
     bool wIsSelected = (index >= mSelection.fromIndex && index <= mSelection.toIndex);
     if(wIsSelected)
     {
-        painter->fillRect(QRect(x, y, w, h), QBrush(selectionColor));
+        painter->fillRect(QRect(x, y, w, h), QBrush(mSelectionColor));
     }
     if(index >= mTraceFile->Length())
         return "";
@@ -297,33 +339,11 @@ NotDebuggingLabel:
 
     case 2: //opcode
     {
-        RichTextPainter::List richBytes;
-        RichTextPainter::CustomRichText_t curByte;
-        RichTextPainter::CustomRichText_t space;
         unsigned char opcodes[16];
         int opcodeSize = 0;
         mTraceFile->OpCode(index, opcodes, &opcodeSize);
-        space.text = " ";
-        space.flags = RichTextPainter::FlagNone;
-        space.highlightWidth = 1;
-        space.highlightConnectPrev = true;
-        curByte.flags = RichTextPainter::FlagAll;
-        curByte.highlightWidth = 1;
-        space.highlight = false;
-        curByte.highlight = false;
-
-        for(int i = 0; i < opcodeSize; i++)
-        {
-            if(i)
-                richBytes.push_back(space);
-
-            curByte.text = ToByteString(opcodes[i]);
-            curByte.textColor = mBytesColor;
-            curByte.textBackground = mBytesBackgroundColor;
-            richBytes.push_back(curByte);
-        }
-
-        RichTextPainter::paintRichText(painter, x, y, getColumnWidth(col), getRowHeight(), 4, richBytes, mFontMetrics);
+        Instruction_t inst = mDisasm->DisassembleAt(opcodes, opcodeSize, 0, mTraceFile->Registers(index).regcontext.cip, false);
+        RichTextPainter::paintRichText(painter, x, y, getColumnWidth(col), getRowHeight(), 4, getRichBytes(inst), mFontMetrics);
         return "";
     }
 
@@ -337,15 +357,16 @@ NotDebuggingLabel:
         Instruction_t inst = mDisasm->DisassembleAt(opcodes, opcodeSize, 0, mTraceFile->Registers(index).regcontext.cip, false);
 
         if(mHighlightToken.text.length())
-            CapstoneTokenizer::TokenToRichText(inst.tokens, richText, &mHighlightToken);
+            ZydisTokenizer::TokenToRichText(inst.tokens, richText, &mHighlightToken);
         else
-            CapstoneTokenizer::TokenToRichText(inst.tokens, richText, 0);
+            ZydisTokenizer::TokenToRichText(inst.tokens, richText, 0);
         RichTextPainter::paintRichText(painter, x + 0, y, getColumnWidth(col) - 0, getRowHeight(), 4, richText, mFontMetrics);
         return "";
     }
 
     case 4: //comments
     {
+        int xinc = 3;
         if(DbgIsDebugging())
         {
             //TODO: draw arguments
@@ -370,8 +391,8 @@ NotDebuggingLabel:
                 if(width > w)
                     width = w;
                 if(width)
-                    painter->fillRect(QRect(x, y, width, h), QBrush(backgroundColor)); //fill comment color
-                painter->drawText(QRect(x, y, width, h), Qt::AlignVCenter | Qt::AlignLeft, comment);
+                    painter->fillRect(QRect(x + xinc, y, width, h), QBrush(backgroundColor)); //fill comment color
+                painter->drawText(QRect(x + xinc, y, width, h), Qt::AlignVCenter | Qt::AlignLeft, comment);
             }
             else if(DbgGetLabelAt(cur_addr, SEG_DEFAULT, label)) // label but no comment
             {
@@ -384,8 +405,8 @@ NotDebuggingLabel:
                 if(width > w)
                     width = w;
                 if(width)
-                    painter->fillRect(QRect(x, y, width, h), QBrush(backgroundColor)); //fill comment color
-                painter->drawText(QRect(x, y, width, h), Qt::AlignVCenter | Qt::AlignLeft, labelText);
+                    painter->fillRect(QRect(x + xinc, y, width, h), QBrush(backgroundColor)); //fill comment color
+                painter->drawText(QRect(x + xinc, y, width, h), Qt::AlignVCenter | Qt::AlignLeft, labelText);
             }
         }
         return "";
@@ -446,6 +467,10 @@ void TraceBrowser::setupRightClickContextMenu()
     {
         return mTraceFile != nullptr;
     });
+    mMenuBuilder->addAction(makeAction(DIcon("fatal-error.png"), tr("Close and delete"), SLOT(closeDeleteSlot())), [this](QMenu*)
+    {
+        return mTraceFile != nullptr;
+    });
     mMenuBuilder->addSeparator();
     auto isValid = [this](QMenu*)
     {
@@ -494,8 +519,8 @@ void TraceBrowser::setupRightClickContextMenu()
     mMenuBuilder->addMenu(makeMenu(DIcon("goto.png"), tr("Go to")), gotoMenu);
 
     MenuBuilder* searchMenu = new MenuBuilder(this, isValid);
-    searchMenu->addAction(makeAction(tr("Constant"), SLOT(searchConstantSlot())));
-    searchMenu->addAction(makeAction(tr("Memory Reference"), SLOT(searchMemRefSlot())));
+    searchMenu->addAction(makeAction(DIcon("search_for_constant.png"), tr("Constant"), SLOT(searchConstantSlot())));
+    searchMenu->addAction(makeAction(DIcon("memory-map.png"), tr("Memory Reference"), SLOT(searchMemRefSlot())));
     mMenuBuilder->addMenu(makeMenu(DIcon("search.png"), tr("&Search")), searchMenu);
 
     // The following code adds a menu to view the information about currently selected instruction. When info box is completed, remove me.
@@ -560,6 +585,19 @@ void TraceBrowser::setupRightClickContextMenu()
         return true;
     });
     mMenuBuilder->addMenu(makeMenu(tr("Information")), infoMenu);
+
+
+    QAction* toggleAutoDisassemblyFollowSelection = makeAction(tr("Toggle Auto Disassembly Scroll (off)"), SLOT(toggleAutoDisassemblyFollowSelectionSlot()));
+    mMenuBuilder->addAction(toggleAutoDisassemblyFollowSelection, [this, toggleAutoDisassemblyFollowSelection](QMenu*)
+    {
+        if(!DbgIsDebugging())
+            return false;
+        if(mAutoDisassemblyFollowSelection)
+            toggleAutoDisassemblyFollowSelection->setText(tr("Toggle Auto Disassembly Scroll (on)"));
+        else
+            toggleAutoDisassemblyFollowSelection->setText(tr("Toggle Auto Disassembly Scroll (off)"));
+        return true;
+    });
 }
 
 void TraceBrowser::contextMenuEvent(QContextMenuEvent* event)
@@ -588,29 +626,29 @@ void TraceBrowser::mousePressEvent(QMouseEvent* event)
                         int opcodeSize;
                         mTraceFile->OpCode(index, opcode, &opcodeSize);
                         inst = mDisasm->DisassembleAt(opcode, opcodeSize, mTraceFile->Registers(index).regcontext.cip, 0);
-                        CapstoneTokenizer::SingleToken token;
-                        if(CapstoneTokenizer::TokenFromX(inst.tokens, token, event->x() - getColumnPosition(3), mFontMetrics))
+                        ZydisTokenizer::SingleToken token;
+                        if(ZydisTokenizer::TokenFromX(inst.tokens, token, event->x() - getColumnPosition(3), mFontMetrics))
                         {
-                            if(CapstoneTokenizer::IsHighlightableToken(token))
+                            if(ZydisTokenizer::IsHighlightableToken(token))
                             {
-                                if(!CapstoneTokenizer::TokenEquals(&token, &mHighlightToken) || event->button() == Qt::RightButton)
+                                if(!ZydisTokenizer::TokenEquals(&token, &mHighlightToken) || event->button() == Qt::RightButton)
                                     mHighlightToken = token;
                                 else
-                                    mHighlightToken = CapstoneTokenizer::SingleToken();
+                                    mHighlightToken = ZydisTokenizer::SingleToken();
                             }
                             else if(!mPermanentHighlightingMode)
                             {
-                                mHighlightToken = CapstoneTokenizer::SingleToken();
+                                mHighlightToken = ZydisTokenizer::SingleToken();
                             }
                         }
                         else if(!mPermanentHighlightingMode)
                         {
-                            mHighlightToken = CapstoneTokenizer::SingleToken();
+                            mHighlightToken = ZydisTokenizer::SingleToken();
                         }
                     }
                     else if(!mPermanentHighlightingMode)
                     {
-                        mHighlightToken = CapstoneTokenizer::SingleToken();
+                        mHighlightToken = ZydisTokenizer::SingleToken();
                     }
                     if(mHighlightingMode) //disable highlighting mode after clicked
                     {
@@ -624,6 +662,10 @@ void TraceBrowser::mousePressEvent(QMouseEvent* event)
                     setSingleSelection(index);
                 mHistory.addVaToHistory(index);
                 updateViewport();
+
+                if(mAutoDisassemblyFollowSelection)
+                    followDisassemblySlot();
+
                 return;
             }
             break;
@@ -752,6 +794,9 @@ void TraceBrowser::keyPressEvent(QKeyEvent* event)
         makeVisible(visibleindex);
         mHistory.addVaToHistory(visibleindex);
         updateViewport();
+
+        if(mAutoDisassemblyFollowSelection)
+            followDisassemblySlot();
     }
     else
         AbstractTableView::keyPressEvent(event);
@@ -814,7 +859,7 @@ void TraceBrowser::makeVisible(duint index)
         setTableOffset(index - getViewableRowsCount() + 2);
 }
 
-QString TraceBrowser::getIndexText(duint index)
+QString TraceBrowser::getIndexText(duint index) const
 {
     QString indexString;
     indexString = QString::number(index, 16).toUpper();
@@ -834,9 +879,9 @@ QString TraceBrowser::getIndexText(duint index)
 void TraceBrowser::updateColors()
 {
     AbstractTableView::updateColors();
-    //CapstoneTokenizer::UpdateColors(); //Already called in disassembly
+    //ZydisTokenizer::UpdateColors(); //Already called in disassembly
     mDisasm->UpdateConfig();
-    backgroundColor = ConfigColor("DisassemblyBackgroundColor");
+    mBackgroundColor = ConfigColor("DisassemblyBackgroundColor");
 
     mInstructionHighlightColor = ConfigColor("InstructionHighlightColor");
     mSelectionColor = ConfigColor("DisassemblySelectionColor");
@@ -861,6 +906,7 @@ void TraceBrowser::updateColors()
     mAutoCommentBackgroundColor = ConfigColor("DisassemblyAutoCommentBackgroundColor");
     mCommentColor = ConfigColor("DisassemblyCommentColor");
     mCommentBackgroundColor = ConfigColor("DisassemblyCommentBackgroundColor");
+    mDisassemblyRelocationUnderlineColor = ConfigColor("DisassemblyRelocationUnderlineColor");
 }
 
 void TraceBrowser::openFileSlot()
@@ -915,10 +961,26 @@ void TraceBrowser::toggleRunTraceSlot()
 
 void TraceBrowser::closeFileSlot()
 {
+    if(DbgValFromString("tr.runtraceenabled()") == 1)
+        DbgCmdExec("StopRunTrace");
     mTraceFile->Close();
     delete mTraceFile;
     mTraceFile = nullptr;
     reloadData();
+}
+
+void TraceBrowser::closeDeleteSlot()
+{
+    QMessageBox msgbox(QMessageBox::Critical, tr("Close and delete"), tr("Are you really going to delete this file?"), QMessageBox::Yes | QMessageBox::Cancel, this);
+    if(msgbox.exec() == QMessageBox::Yes)
+    {
+        if(DbgValFromString("tr.runtraceenabled()") == 1)
+            DbgCmdExecDirect("StopRunTrace");
+        mTraceFile->Delete();
+        delete mTraceFile;
+        mTraceFile = nullptr;
+        reloadData();
+    }
 }
 
 void TraceBrowser::parseFinishedSlot()
@@ -1028,24 +1090,18 @@ void TraceBrowser::pushSelectionInto(bool copyBytes, QTextStream & stream, QText
         inst = mDisasm->DisassembleAt(opcode, opcodeSize, cur_addr, 0);
         QString address = getAddrText(cur_addr, 0, addressLen > sizeof(duint) * 2 + 1);
         QString bytes;
+        QString bytesHTML;
         if(copyBytes)
-        {
-            for(int j = 0; j < opcodeSize; j++)
-            {
-                if(j)
-                    bytes += " ";
-                bytes += ToByteString((unsigned char)(opcode[j]));
-            }
-        }
+            RichTextPainter::htmlRichText(getRichBytes(inst), bytesHTML, bytes);
         QString disassembly;
         QString htmlDisassembly;
         if(htmlStream)
         {
             RichTextPainter::List richText;
             if(mHighlightToken.text.length())
-                CapstoneTokenizer::TokenToRichText(inst.tokens, richText, &mHighlightToken);
+                ZydisTokenizer::TokenToRichText(inst.tokens, richText, &mHighlightToken);
             else
-                CapstoneTokenizer::TokenToRichText(inst.tokens, richText, 0);
+                ZydisTokenizer::TokenToRichText(inst.tokens, richText, 0);
             RichTextPainter::htmlRichText(richText, htmlDisassembly, disassembly);
         }
         else
@@ -1058,13 +1114,16 @@ void TraceBrowser::pushSelectionInto(bool copyBytes, QTextStream & stream, QText
         bool autocomment;
         if(GetCommentFormat(cur_addr, comment, &autocomment))
             fullComment = " " + comment;
-        stream << address.leftJustified(addressLen, QChar(' '), true);
+        stream << getIndexText(i) + " | " + address.leftJustified(addressLen, QChar(' '), true);
         if(copyBytes)
             stream << " | " + bytes.leftJustified(bytesLen, QChar(' '), true);
         stream << " | " + disassembly.leftJustified(disassemblyLen, QChar(' '), true) + " |" + fullComment;
         if(htmlStream)
         {
-            *htmlStream << QString("<tr><td>%1</td><td>%2</td><td>").arg(address.toHtmlEscaped(), htmlDisassembly);
+            *htmlStream << QString("<tr><td>%1</td><td>%2</td><td>").arg(getIndexText(i), address.toHtmlEscaped());
+            if(copyBytes)
+                *htmlStream << QString("%1</td><td>").arg(bytesHTML);
+            *htmlStream << QString("%1</td><td>").arg(htmlDisassembly);
             if(!comment.isEmpty())
             {
                 if(autocomment)
@@ -1174,7 +1233,7 @@ void TraceBrowser::copyDisassemblySlot()
         int opcodeSize;
         mTraceFile->OpCode(i, opcode, &opcodeSize);
         Instruction_t inst = mDisasm->DisassembleAt(opcode, opcodeSize, mTraceFile->Registers(i).regcontext.cip, 0);
-        CapstoneTokenizer::TokenToRichText(inst.tokens, richText, 0);
+        ZydisTokenizer::TokenToRichText(inst.tokens, richText, 0);
         RichTextPainter::htmlRichText(richText, clipboardHtml, clipboard);
     }
     clipboardHtml += QString("</div>");
@@ -1352,4 +1411,9 @@ void TraceBrowser::updateSlot()
         setRowCount(mTraceFile->Length());
         reloadData();
     }
+}
+
+void TraceBrowser::toggleAutoDisassemblyFollowSelectionSlot()
+{
+    mAutoDisassemblyFollowSelection = !mAutoDisassemblyFollowSelection;
 }

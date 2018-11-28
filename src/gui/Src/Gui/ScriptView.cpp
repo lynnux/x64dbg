@@ -16,6 +16,7 @@ ScriptView::ScriptView(StdTable* parent) : StdTable(parent)
     enableMultiSelection(false);
     enableColumnSorting(false);
     setDrawDebugOnly(false);
+    setDisassemblyPopupEnabled(false);
 
     int charwidth = getCharWidth();
 
@@ -59,8 +60,8 @@ void ScriptView::updateColors()
 {
     StdTable::updateColors();
 
-    selectionColor = ConfigColor("DisassemblySelectionColor");
-    backgroundColor = ConfigColor("DisassemblyBackgroundColor");
+    mSelectionColor = ConfigColor("DisassemblySelectionColor");
+    mBackgroundColor = ConfigColor("DisassemblyBackgroundColor");
 }
 
 QString ScriptView::paintContent(QPainter* painter, dsint rowBase, int rowOffset, int col, int x, int y, int w, int h)
@@ -68,7 +69,7 @@ QString ScriptView::paintContent(QPainter* painter, dsint rowBase, int rowOffset
     bool wIsSelected = isSelected(rowBase, rowOffset);
     // Highlight if selected
     if(wIsSelected)
-        painter->fillRect(QRect(x, y, w, h), QBrush(selectionColor)); //ScriptViewSelectionColor
+        painter->fillRect(QRect(x, y, w, h), QBrush(mSelectionColor)); //ScriptViewSelectionColor
     QString returnString;
     int line = rowBase + rowOffset + 1;
     SCRIPTLINETYPE linetype = DbgScriptGetLineType(line);

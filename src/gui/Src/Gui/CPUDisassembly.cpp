@@ -23,7 +23,6 @@
 #include "XrefBrowseDialog.h"
 #include "SourceViewerManager.h"
 #include "MiscUtil.h"
-#include "DataCopyDialog.h"
 #include "SnowmanView.h"
 #include "MemoryPage.h"
 #include "BreakpointMenu.h"
@@ -277,8 +276,8 @@ void CPUDisassembly::setupRightClickContextMenu()
     copyMenu->addAction(makeShortcutAction(DIcon("copy_address.png"), tr("&Address"), SLOT(copyAddressSlot()), "ActionCopyAddress"));
     copyMenu->addAction(makeShortcutAction(DIcon("copy_address.png"), tr("&RVA"), SLOT(copyRvaSlot()), "ActionCopyRva"));
     copyMenu->addAction(makeShortcutAction(DIcon("fileoffset.png"), tr("&File Offset"), SLOT(copyFileOffsetSlot()), "ActionCopyFileOffset"));
+    copyMenu->addAction(makeAction(tr("&Header VA"), SLOT(copyHeaderVaSlot())));
     copyMenu->addAction(makeAction(DIcon("copy_disassembly.png"), tr("Disassembly"), SLOT(copyDisassemblySlot())));
-    copyMenu->addAction(makeAction(DIcon("data-copy.png"), tr("&Data..."), SLOT(copyDataSlot())));
 
     copyMenu->addMenu(makeMenu(DIcon("copy_selection.png"), tr("Symbolic Name")), [this](QMenu * menu)
     {
@@ -354,13 +353,15 @@ void CPUDisassembly::setupRightClickContextMenu()
     });
 
     mMenuBuilder->addAction(makeShortcutAction(DIcon("highlight.png"), tr("&Highlighting mode"), SLOT(enableHighlightingModeSlot()), "ActionHighlightingMode"));
-    QAction* togglePreview = makeShortcutAction(DIcon("branchpreview.png"), tr("Disable Branch Destination Preview"), SLOT(togglePreviewSlot()), "ActionToggleDestinationPreview");
-    mMenuBuilder->addAction(togglePreview, [this, togglePreview](QMenu*)
-    {
-        togglePreview->setText(mPopupEnabled ? tr("Disable Branch Destination Preview") : tr("Enable Branch Destination Preview"));
-        return false; //hide this menu from the user, but keep the shortcut working
-    });
-
+    //The following code to manage branch preview has been disabled and will be implemented in a setting instead.
+    /*
+        QAction* togglePreview = makeShortcutAction(DIcon("branchpreview.png"), tr("Disable Branch Destination Preview"), SLOT(togglePreviewSlot()), "ActionToggleDestinationPreview");
+        mMenuBuilder->addAction(togglePreview, [this, togglePreview](QMenu*)
+        {
+            togglePreview->setText(mPopupEnabled ? tr("Disable Branch Destination Preview") : tr("Enable Branch Destination Preview"));
+            return false; //hide this menu from the user, but keep the shortcut working
+        });
+    */
     MenuBuilder* labelMenu = new MenuBuilder(this);
     labelMenu->addAction(makeShortcutAction(tr("Label Current Address"), SLOT(setLabelSlot()), "ActionSetLabel"));
     QAction* labelAddress = makeShortcutAction(tr("Label"), SLOT(setLabelAddressSlot()), "ActionSetLabelOperand");
@@ -1291,6 +1292,7 @@ void CPUDisassembly::findPatternSlot()
 {
     HexEditDialog hexEdit(this);
     hexEdit.showEntireBlock(true);
+    hexEdit.isDataCopiable(false);
     hexEdit.mHexEdit->setOverwriteMode(false);
     hexEdit.setWindowTitle(tr("Find Pattern..."));
     if(hexEdit.exec() != QDialog::Accepted)
@@ -1575,7 +1577,7 @@ void CPUDisassembly::pushSelectionInto(bool copyBytes, QTextStream & stream, QTe
     const int bytesLen = getColumnWidth(1) / getCharWidth() - 1;
     const int disassemblyLen = getColumnWidth(2) / getCharWidth() - 1;
     if(htmlStream)
-        *htmlStream << QString("<table style=\"border-width:0px;border-color:#000000;font-family:%1;font-size:%2px;\">").arg(font().family()).arg(getRowHeight());
+        *htmlStream << QString("<table style=\"border-width:0px;border-color:#000000;font-family:%1;font-size:%2px;\">").arg(font().family().toHtmlEscaped()).arg(getRowHeight());
     prepareDataRange(getSelectionStart(), getSelectionEnd(), [&](int i, const Instruction_t & inst)
     {
         if(i)
@@ -1583,24 +1585,18 @@ void CPUDisassembly::pushSelectionInto(bool copyBytes, QTextStream & stream, QTe
         duint cur_addr = rvaToVa(inst.rva);
         QString address = getAddrText(cur_addr, 0, addressLen > sizeof(duint) * 2 + 1);
         QString bytes;
+        QString bytesHtml;
         if(copyBytes)
-        {
-            for(int j = 0; j < inst.dump.size(); j++)
-            {
-                if(j)
-                    bytes += " ";
-                bytes += ToByteString((unsigned char)(inst.dump.at(j)));
-            }
-        }
+            RichTextPainter::htmlRichText(getRichBytes(inst), bytesHtml, bytes);
         QString disassembly;
         QString htmlDisassembly;
         if(htmlStream)
         {
             RichTextPainter::List richText;
             if(mHighlightToken.text.length())
-                CapstoneTokenizer::TokenToRichText(inst.tokens, richText, &mHighlightToken);
+                ZydisTokenizer::TokenToRichText(inst.tokens, richText, &mHighlightToken);
             else
-                CapstoneTokenizer::TokenToRichText(inst.tokens, richText, 0);
+                ZydisTokenizer::TokenToRichText(inst.tokens, richText, 0);
             RichTextPainter::htmlRichText(richText, htmlDisassembly, disassembly);
         }
         else
@@ -1619,7 +1615,7 @@ void CPUDisassembly::pushSelectionInto(bool copyBytes, QTextStream & stream, QTe
         stream << " | " + disassembly.leftJustified(disassemblyLen, QChar(' '), true) + " |" + fullComment;
         if(htmlStream)
         {
-            *htmlStream << QString("<tr><td>%1</td><td>%2</td><td>").arg(address.toHtmlEscaped(), htmlDisassembly);
+            *htmlStream << QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>").arg(address.toHtmlEscaped(), bytesHtml, htmlDisassembly);
             if(!comment.isEmpty())
             {
                 if(autocomment)
@@ -1732,6 +1728,30 @@ void CPUDisassembly::copyFileOffsetSlot()
     Bridge::CopyToClipboard(clipboard);
 }
 
+void CPUDisassembly::copyHeaderVaSlot()
+{
+    QString clipboard = "";
+    prepareDataRange(getSelectionStart(), getSelectionEnd(), [&](int i, const Instruction_t & inst)
+    {
+        if(i)
+            clipboard += "\r\n";
+        duint addr = rvaToVa(inst.rva);
+        duint base = DbgFunctions()->ModBaseFromAddr(addr);
+        if(base)
+        {
+            auto expr = QString("mod.headerva(0x%1)").arg(ToPtrString(addr));
+            clipboard += ToPtrString(DbgValFromString(expr.toUtf8().constData()));
+        }
+        else
+        {
+            SimpleWarningBox(this, tr("Error!"), tr("Selection not in a module..."));
+            return false;
+        }
+        return true;
+    });
+    Bridge::CopyToClipboard(clipboard);
+}
+
 void CPUDisassembly::copyDisassemblySlot()
 {
     QString clipboardHtml = QString("<div style=\"font-family: %1; font-size: %2px\">").arg(font().family()).arg(getRowHeight());
@@ -1745,25 +1765,14 @@ void CPUDisassembly::copyDisassemblySlot()
         }
         RichTextPainter::List richText;
         if(mHighlightToken.text.length())
-            CapstoneTokenizer::TokenToRichText(inst.tokens, richText, &mHighlightToken);
+            ZydisTokenizer::TokenToRichText(inst.tokens, richText, &mHighlightToken);
         else
-            CapstoneTokenizer::TokenToRichText(inst.tokens, richText, 0);
+            ZydisTokenizer::TokenToRichText(inst.tokens, richText, 0);
         RichTextPainter::htmlRichText(richText, clipboardHtml, clipboard);
         return true;
     });
     clipboardHtml += QString("</div>");
     Bridge::CopyToClipboard(clipboard, clipboardHtml);
-}
-
-void CPUDisassembly::copyDataSlot()
-{
-    dsint selStart = getSelectionStart();
-    dsint selSize = getSelectionEnd() - selStart + 1;
-    QVector<byte_t> data;
-    data.resize(selSize);
-    mMemPage->read(data.data(), selStart, selSize);
-    DataCopyDialog dataDialog(&data, this);
-    dataDialog.exec();
 }
 
 void CPUDisassembly::labelCopySlot()
@@ -1828,9 +1837,10 @@ void CPUDisassembly::openSourceSlot()
 {
     char szSourceFile[MAX_STRING_SIZE] = "";
     int line = 0;
-    if(!DbgFunctions()->GetSourceFromAddr(rvaToVa(getInitialSelection()), szSourceFile, &line))
+    auto sel = rvaToVa(getInitialSelection());
+    if(!DbgFunctions()->GetSourceFromAddr(sel, szSourceFile, &line))
         return;
-    emit Bridge::getBridge()->loadSourceFile(szSourceFile, 0, line);
+    emit Bridge::getBridge()->loadSourceFile(szSourceFile, sel);
     emit displaySourceManagerWidget();
 }
 
@@ -2059,7 +2069,7 @@ void CPUDisassembly::graphSlot()
     if(DbgCmdExecDirect(QString("graph %1").arg(ToPtrString(rvaToVa(getSelectionStart()))).toUtf8().constData()))
         emit displayGraphWidget();
 }
-
+/*
 void CPUDisassembly::togglePreviewSlot()
 {
     if(mPopupEnabled == true)
@@ -2067,7 +2077,7 @@ void CPUDisassembly::togglePreviewSlot()
     mPopupEnabled = !mPopupEnabled;
     BridgeSettingSetUint("Gui", "DisableBranchDestinationPreview", !mPopupEnabled);
 }
-
+*/
 void CPUDisassembly::analyzeModuleSlot()
 {
     DbgCmdExec("cfanal");
@@ -2108,7 +2118,7 @@ void CPUDisassembly::copyTokenValueSlot()
 
 bool CPUDisassembly::getTokenValueText(QString & text)
 {
-    if(mHighlightToken.type <= CapstoneTokenizer::TokenType::MnemonicUnusual)
+    if(mHighlightToken.type <= ZydisTokenizer::TokenType::MnemonicUnusual)
         return false;
     duint value = mHighlightToken.value.value;
     if(!mHighlightToken.value.size && !DbgFunctions()->ValFromString(mHighlightToken.text.toUtf8().constData(), &value))

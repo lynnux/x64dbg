@@ -6,7 +6,7 @@
 QBeaEngine::QBeaEngine(int maxModuleSize)
     : _tokenizer(maxModuleSize), mCodeFoldingManager(nullptr), _bLongDataInst(false)
 {
-    CapstoneTokenizer::UpdateColors();
+    ZydisTokenizer::UpdateColors();
     UpdateDataInstructionMap();
     this->mEncodeMap = new EncodeMap();
 }
@@ -190,11 +190,11 @@ Instruction_t QBeaEngine::DisassembleAt(byte_t* data, duint size, duint origBase
             return DecodeDataAt(data, size, origBase, origInstRVA, type);
     }
     //tokenize
-    CapstoneTokenizer::InstructionToken cap;
+    ZydisTokenizer::InstructionToken cap;
     _tokenizer.Tokenize(origBase + origInstRVA, data, size, cap);
     int len = _tokenizer.Size();
 
-    const auto & cp = _tokenizer.GetCapstone();
+    const auto & cp = _tokenizer.GetZydis();
     bool success = cp.Success();
 
 
@@ -222,6 +222,7 @@ Instruction_t QBeaEngine::DisassembleAt(byte_t* data, duint size, duint origBase
         wInst.length = len;
     wInst.branchType = branchType;
     wInst.tokens = cap;
+    cp.BytesGroup(&wInst.prefixSize, &wInst.opcodeSize, &wInst.group1Size, &wInst.group2Size, &wInst.group3Size);
 
     if(!success)
         return wInst;
@@ -269,7 +270,7 @@ Instruction_t QBeaEngine::DisassembleAt(byte_t* data, duint size, duint origBase
 Instruction_t QBeaEngine::DecodeDataAt(byte_t* data, duint size, duint origBase, duint origInstRVA, ENCODETYPE type)
 {
     //tokenize
-    CapstoneTokenizer::InstructionToken cap;
+    ZydisTokenizer::InstructionToken cap;
 
     auto infoIter = dataInstMap.find(type);
     if(infoIter == dataInstMap.end())
@@ -293,6 +294,11 @@ Instruction_t QBeaEngine::DecodeDataAt(byte_t* data, duint size, duint origBase,
     wInst.branchType = Instruction_t::None;
     wInst.branchDestination = 0;
     wInst.tokens = cap;
+    wInst.prefixSize = 0;
+    wInst.opcodeSize = len;
+    wInst.group1Size = 0;
+    wInst.group2Size = 0;
+    wInst.group3Size = 0;
 
     return wInst;
 }
@@ -326,4 +332,41 @@ void QBeaEngine::UpdateConfig()
 {
     _bLongDataInst = ConfigBool("Disassembler", "LongDataInstruction");
     _tokenizer.UpdateConfig();
+}
+
+void formatOpcodeString(const Instruction_t & inst, RichTextPainter::List & list, std::vector<std::pair<size_t, bool>> & realBytes)
+{
+    RichTextPainter::CustomRichText_t curByte;
+    size_t size = inst.dump.size();
+    assert(list.empty()); //List must be empty before use
+    curByte.highlightWidth = 1;
+    curByte.flags = RichTextPainter::FlagAll;
+    curByte.highlight = false;
+    list.reserve(size + 5);
+    realBytes.reserve(size + 5);
+    for(size_t i = 0; i < size; i++)
+    {
+        curByte.text = ToByteString(inst.dump.at(i));
+        list.push_back(curByte);
+        realBytes.push_back({i, true});
+
+        auto addCh = [&](char ch)
+        {
+            curByte.text = QString(ch);
+            list.push_back(curByte);
+            realBytes.push_back({i, false});
+        };
+
+        if(inst.prefixSize && i + 1 == inst.prefixSize)
+            addCh(':');
+        else if(inst.opcodeSize && i + 1 == inst.prefixSize + inst.opcodeSize)
+            addCh(' ');
+        else if(inst.group1Size && i + 1 == inst.prefixSize + inst.opcodeSize + inst.group1Size)
+            addCh(' ');
+        else if(inst.group2Size && i + 1 == inst.prefixSize + inst.opcodeSize + inst.group1Size + inst.group2Size)
+            addCh(' ');
+        else if(inst.group3Size && i + 1 == inst.prefixSize + inst.opcodeSize + inst.group1Size + inst.group2Size + inst.group3Size)
+            addCh(' ');
+
+    }
 }

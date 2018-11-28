@@ -213,6 +213,7 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     defaultColors.insert("GraphJmpColor", QColor("#0148FB"));
     defaultColors.insert("GraphBrtrueColor", QColor("#387804"));
     defaultColors.insert("GraphBrfalseColor", QColor("#ED4630"));
+    defaultColors.insert("GraphCurrentShadowColor", QColor("#473a3a"));
     defaultColors.insert("GraphRetShadowColor", QColor("#900000"));
     defaultColors.insert("GraphIndirectcallShadowColor", QColor("#008080"));
     defaultColors.insert("GraphBackgroundColor", Qt::transparent);
@@ -274,6 +275,7 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     guiBool.insert("SidebarWatchLabels", true);
     guiBool.insert("LoadSaveTabOrder", false);
     guiBool.insert("ShowGraphRva", false);
+    guiBool.insert("GraphZoomMode", false);
     guiBool.insert("ShowExitConfirmation", true);
     guiBool.insert("DisableAutoComplete", false);
     //Named menu settings
@@ -313,7 +315,7 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     AbstractTableView::setupColumnConfigDefaultValue(guiUint, "Privilege", 2);
     AbstractTableView::setupColumnConfigDefaultValue(guiUint, "LocalVarsView", 3);
     AbstractTableView::setupColumnConfigDefaultValue(guiUint, "Module", 4);
-    AbstractTableView::setupColumnConfigDefaultValue(guiUint, "Symbol", 4);
+    AbstractTableView::setupColumnConfigDefaultValue(guiUint, "Symbol", 5);
     guiUint.insert("SIMDRegistersDisplayMode", 0);
     addWindowPosConfig(guiUint, "AssembleDialog");
     addWindowPosConfig(guiUint, "AttachDialog");
@@ -324,7 +326,6 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     addWindowPosConfig(guiUint, "EntropyDialog");
     addWindowPosConfig(guiUint, "HexEditDialog");
     addWindowPosConfig(guiUint, "WordEditDialog");
-    addWindowPosConfig(guiUint, "DataCopyDialog");
     defaultUints.insert("Gui", guiUint);
 
     //uint settings
@@ -561,6 +562,7 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     defaultShortcuts.insert("ActionZeroRegister", Shortcut({tr("Actions"), tr("Zero Register")}, "0"));
     defaultShortcuts.insert("ActionSetOneRegister", Shortcut({tr("Actions"), tr("Set Register to One")}, "1"));
     defaultShortcuts.insert("ActionToggleRegisterValue", Shortcut({tr("Actions"), tr("Toggle Register Value")}, "Space"));
+    defaultShortcuts.insert("ActionClear", Shortcut({tr("Actions"), tr("Clear")}, "Ctrl+L"));
     defaultShortcuts.insert("ActionCopy", Shortcut({tr("Actions"), tr("Copy")}, "Ctrl+C"));
     defaultShortcuts.insert("ActionCopyAddress", Shortcut({tr("Actions"), tr("Copy Address")}, "Alt+INS"));
     defaultShortcuts.insert("ActionCopyRva", Shortcut({tr("Actions"), tr("Copy RVA")}, ""));
@@ -577,6 +579,8 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     defaultShortcuts.insert("ActionExecuteCommandScript", Shortcut({tr("Actions"), tr("Execute Script Command")}, "X"));
     defaultShortcuts.insert("ActionRefresh", Shortcut({tr("Actions"), tr("Refresh")}, "F5"));
     defaultShortcuts.insert("ActionGraph", Shortcut({tr("Actions"), tr("Graph")}, "G"));
+    defaultShortcuts.insert("ActionGraphZoomToCursor", Shortcut({tr("Actions"), tr("Graph"), tr("Zoom to cursor")}, "Z"));
+    defaultShortcuts.insert("ActionGraphFitToWindow", Shortcut({tr("Actions"), tr("Graph"), tr("Fit To Window")}, "Shift+Z"));
     defaultShortcuts.insert("ActionGraphFollowDisassembler", Shortcut({tr("Actions"), tr("Graph"), tr("Follow in disassembler")}, "Shift+Return"));
     defaultShortcuts.insert("ActionGraphSaveImage", Shortcut({tr("Actions"), tr("Graph"), tr("Save as image")}, "I"));
     defaultShortcuts.insert("ActionGraphToggleOverview", Shortcut({tr("Actions"), tr("Graph"), tr("Toggle overview")}, "O"));
@@ -606,7 +610,6 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     defaultShortcuts.insert("ActionGotoNextReference", Shortcut({tr("Actions"), tr("Go to Next Reference")}, "Ctrl+L"));
     defaultShortcuts.insert("ActionModifyValue", Shortcut({tr("Actions"), tr("Modify value")}, "Space"));
     defaultShortcuts.insert("ActionWatchDwordQword", Shortcut({tr("Actions"), tr("Watch DWORD/QWORD")}));
-    defaultShortcuts.insert("ActionDataCopy", Shortcut({tr("Actions"), tr("Data Copy")}));
     defaultShortcuts.insert("ActionCopyFileOffset", Shortcut({tr("Actions"), tr("Copy File Offset")}));
     defaultShortcuts.insert("ActionToggleRunTrace", Shortcut({tr("Actions"), tr("Start or Stop Run Trace")}));
     defaultShortcuts.insert("ActionFollowDisasmPopup", Shortcut({tr("Actions"), tr("Popup Window to Follow in Disassembler")}, "Ctrl+1"));
