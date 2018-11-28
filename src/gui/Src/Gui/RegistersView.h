@@ -10,6 +10,7 @@
 class CPUWidget;
 class CPUMultiDump;
 class QPushButton;
+class FollowInDataProxy;
 
 typedef struct
 {
