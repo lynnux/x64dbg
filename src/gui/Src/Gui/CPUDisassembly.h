@@ -79,7 +79,6 @@ public slots:
     void binaryPasteIgnoreSizeSlot();
     void undoSelectionSlot();
     void showPatchesSlot();
-    void yaraSlot();
     void copySelectionSlot();
     void copySelectionToFileSlot();
     void copySelectionNoBytesSlot();

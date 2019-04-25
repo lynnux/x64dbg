@@ -42,6 +42,7 @@ static PROCESS_INFORMATION g_pi = {0, 0, 0, 0};
 static char szBaseFileName[MAX_PATH] = "";
 static TraceState traceState;
 static bool bFileIsDll = false;
+static bool bEntryIsInMzHeader = false;
 static duint pDebuggedBase = 0;
 static duint pCreateProcessBase = 0;
 static duint pDebuggedEntry = 0;
@@ -1336,6 +1337,22 @@ static void cbCreateProcess(CREATE_PROCESS_DEBUG_INFO* CreateProcessInfo)
         strcpy_s(DebugFileName, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "??? (GetFileNameFromHandle failed)")));
     dprintf(QT_TRANSLATE_NOOP("DBG", "Process Started: %p %s\n"), base, DebugFileName);
 
+    char* cmdline = nullptr;
+    if(dbggetcmdline(&cmdline, nullptr, fdProcessInfo->hProcess))
+    {
+        // Parse the command line from the debuggee
+        int argc = 0;
+        wchar_t** argv = CommandLineToArgvW(StringUtils::Utf8ToUtf16(cmdline).c_str(), &argc);
+
+        // Print the command line to the log
+        dprintf_untranslated("  %s\n", cmdline);
+        for(int i = 0; i < argc; i++)
+            dprintf_untranslated("  argv[%i]: %s\n", i, StringUtils::Utf16ToUtf8(argv[i]).c_str());
+
+        LocalFree(argv);
+        efree(cmdline);
+    }
+
     //update memory map
     MemUpdateMap();
     GuiUpdateMemoryView();
@@ -1382,9 +1399,9 @@ static void cbCreateProcess(CREATE_PROCESS_DEBUG_INFO* CreateProcessInfo)
                 dprintf(QT_TRANSLATE_NOOP("DBG", "%d invalid TLS callback addresses...\n"), invalidCount);
         }
 
-        if(settingboolget("Events", "EntryBreakpoint"))
+        if(settingboolget("Events", "EntryBreakpoint") && !bEntryIsInMzHeader)
         {
-            sprintf_s(command, "bp %p,\"%s\",ss", (duint)CreateProcessInfo->lpStartAddress, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "entry breakpoint")));
+            sprintf_s(command, "bp %p,\"%s\",ss", pDebuggedBase + pDebuggedEntry, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "entry breakpoint")));
             cmddirectexec(command);
         }
 
@@ -1597,7 +1614,13 @@ static void cbSystemBreakpoint(void* ExceptionData) // TODO: System breakpoint e
     plugincbcall(CB_SYSTEMBREAKPOINT, &callbackInfo);
 
     lock(WAITID_RUN); // Allow the user to run a script file now
-    if(bIsAttached ? settingboolget("Events", "AttachBreakpoint") : settingboolget("Events", "SystemBreakpoint"))
+    bool systemBreakpoint = settingboolget("Events", "SystemBreakpoint");
+    if(!systemBreakpoint && bEntryIsInMzHeader)
+    {
+        dputs(QT_TRANSLATE_NOOP("DBG", "It has been detected that the debuggee entry point is in the MZ header of the executable. This will cause strange behavior, so the system breakpoint has been enabled regardless of your setting. Be careful!"));
+        systemBreakpoint = true;
+    }
+    if(bIsAttached ? settingboolget("Events", "AttachBreakpoint") : systemBreakpoint)
     {
         //lock
         GuiSetDebugStateAsync(paused);
@@ -2548,9 +2571,11 @@ static void debugLoopFunction(void* lpParameter, bool attach)
     {
         init = (INIT_STRUCT*)lpParameter;
         gInitExe = StringUtils::Utf8ToUtf16(init->exe);
-        pDebuggedEntry = GetPE32DataW(gInitExe.c_str(), 0, UE_OEP);
         strcpy_s(szFileName, init->exe);
     }
+
+    pDebuggedEntry = GetPE32DataW(gInitExe.c_str(), 0, UE_OEP);
+    bEntryIsInMzHeader = pDebuggedEntry == 0 || pDebuggedEntry == 1;
 
     bFileIsDll = IsFileDLLW(StringUtils::Utf8ToUtf16(szFileName).c_str(), 0);
     DbSetPath(nullptr, szFileName);
@@ -2579,7 +2604,7 @@ static void debugLoopFunction(void* lpParameter, bool attach)
         if(!fdProcessInfo)
         {
             auto lastError = GetLastError();
-            auto isElevated = IsProcessElevated();
+            auto isElevated = BridgeIsProcessElevated();
             String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", lastError));
             if(lastError == ERROR_ELEVATION_REQUIRED && !isElevated)
             {

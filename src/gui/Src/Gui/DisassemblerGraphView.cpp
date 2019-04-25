@@ -941,6 +941,8 @@ duint DisassemblerGraphView::getInstrForMouseEvent(QMouseEvent* event)
 
 bool DisassemblerGraphView::getTokenForMouseEvent(QMouseEvent* event, Token & tokenOut)
 {
+    Q_UNUSED(event);
+    Q_UNUSED(tokenOut);
     /* TODO
     //Convert coordinates to system used in blocks
     int xofs = this->horizontalScrollBar()->value();
@@ -1944,6 +1946,7 @@ void DisassemblerGraphView::loadCurrentGraph()
     if(ConfigBool("Gui", "GraphZoomMode"))
     {
         graphZoomMode = true;
+        drawOverview = false;
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     }
@@ -2146,15 +2149,15 @@ void DisassemblerGraphView::setupContextMenu()
 
     mMenuBuilder->addAction(makeShortcutAction(DIcon("comment.png"), tr("&Comment"), SLOT(setCommentSlot()), "ActionSetComment"), [this](QMenu*)
     {
-        return zoomActionHelper();
+        return zoomActionHelper() != 0;
     });
     mMenuBuilder->addAction(makeShortcutAction(DIcon("label.png"), tr("&Label"), SLOT(setLabelSlot()), "ActionSetLabel"), [this](QMenu*)
     {
-        return zoomActionHelper();
+        return zoomActionHelper() != 0;
     });
     mMenuBuilder->addAction(makeShortcutAction(DIcon("xrefs.png"), tr("Xrefs..."), SLOT(xrefSlot()), "ActionXrefs"), [this](QMenu*)
     {
-        return zoomActionHelper();
+        return zoomActionHelper() != 0;
     });
 
     MenuBuilder* gotoMenu = new MenuBuilder(this);
@@ -2343,6 +2346,8 @@ void DisassemblerGraphView::shortcutsUpdatedSlot()
 
 void DisassemblerGraphView::toggleOverviewSlot()
 {
+    if(graphZoomMode)
+        return;
     drawOverview = !drawOverview;
     if(onlySummary)
     {
