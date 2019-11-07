@@ -25,6 +25,7 @@
 #include "argument.h"
 #include "filemap.h"
 #include "debugger.h"
+#include "stringformat.h"
 
 /**
 \brief Directory where program databases are stored (usually in \db). UTF-8 encoding.
@@ -71,11 +72,6 @@ void DbSave(DbLoadSaveType saveType, const char* dbfile, bool disablecompression
         TraceRecord.saveToDb(root);
         BpCacheSave(root);
         WatchCacheSave(root);
-        if(dbhash != 0)
-        {
-            json_object_set_new(root, "hashAlgorithm", json_string("murmurhash"));
-            json_object_set_new(root, "hash", json_hex(dbhash));
-        }
 
         //save notes
         char* text = nullptr;
@@ -115,6 +111,13 @@ void DbSave(DbLoadSaveType saveType, const char* dbfile, bool disablecompression
         if(json_object_size(pluginRoot))
             json_object_set(root, "plugins", pluginRoot);
         json_decref(pluginRoot);
+
+        //store the file hash only if other data is saved in the database
+        if(dbhash != 0 && json_object_size(root))
+        {
+            json_object_set_new(root, "hashAlgorithm", json_string("murmurhash"));
+            json_object_set_new(root, "hash", json_hex(dbhash));
+        }
     }
 
     auto wdbpath = StringUtils::Utf8ToUtf16(file);
@@ -135,7 +138,8 @@ void DbSave(DbLoadSaveType saveType, const char* dbfile, bool disablecompression
 
         if(!dumpSuccess)
         {
-            dputs(QT_TRANSLATE_NOOP("DBG", "\nFailed to write database file!"));
+            String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+            dprintf(QT_TRANSLATE_NOOP("DBG", "\nFailed to write database file !(GetLastError() = %s)\n"), error.c_str());
             json_decref(root);
             return;
         }
@@ -197,7 +201,8 @@ void DbLoad(DbLoadSaveType loadType, const char* dbfile)
     FileMap<char> dbMap;
     if(!dbMap.Map(databasePathW.c_str()))
     {
-        dputs(QT_TRANSLATE_NOOP("DBG", "\nFailed to read database file!"));
+        String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+        dprintf(QT_TRANSLATE_NOOP("DBG", "\nFailed to read database file !(GetLastError() = %s)\n"), error.c_str());
         return;
     }
 
@@ -325,7 +330,10 @@ void DbSetPath(const char* Directory, const char* ModulePath)
         if(!CreateDirectoryW(StringUtils::Utf8ToUtf16(Directory).c_str(), nullptr))
         {
             if(GetLastError() != ERROR_ALREADY_EXISTS)
-                dprintf(QT_TRANSLATE_NOOP("DBG", "Warning: Failed to create database folder '%s'. Path may be read only.\n"), Directory);
+            {
+                String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+                dprintf(QT_TRANSLATE_NOOP("DBG", "Warning: Failed to create database folder '%s'. GetLastError() = %s\n"), Directory, error.c_str());
+            }
         }
     }
 
@@ -368,7 +376,8 @@ void DbSetPath(const char* Directory, const char* ModulePath)
             auto hFile = CreateFileW(testfile.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
             if(hFile == INVALID_HANDLE_VALUE)
             {
-                dputs(QT_TRANSLATE_NOOP("DBG", "Cannot write to the program directory, try running x64dbg as admin..."));
+                String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+                dprintf(QT_TRANSLATE_NOOP("DBG", "Cannot write to the program directory (GetLastError() = %s), try running x64dbg as admin...\n"), error.c_str());
                 return false;
             }
             CloseHandle(hFile);

@@ -44,7 +44,7 @@ Here is a little guide on how to do a clean pull request for people who don't ye
 5. Commit your change. `git commit -m 'a message about what you changed'`. The change are applied to your local git repo.
 6. Push it to your `origin`. The `origin` is your repo which is hosted on github. `git push --set-upstream origin your-branch-name`.
 7. Sync with the `upstream` repo, the real x64dbg repo. `git remote add upstream https://github.com/x64dbg/x64dbg.git`, using `git remote -v` will show which origin/upstream are setup in the local repo.
-8. Sync your fork with the `upstream`, `git fetch upstream`. Now checkout in the master again `git checkout master` and merge the upstream `git merge upstream/master`.
+8. Sync your fork with the `upstream`, `git fetch upstream`. Now checkout your local `development` branch again `git checkout development` and merge the upstream `git merge upstream/development`.
 9. Time to create the pull request! Using the github ui, go to your account/repo, select the branch you already pushed, and click `Pull request`. Review your pull request and send it.
 
 Happy PRs!
@@ -80,3 +80,7 @@ To help translate x64dbg, just head over to http://translate.x64dbg.com, click a
 ### Improve the documentation
 
 If you see any room for improvement in the [documentation](http://help.x64dbg.com), just send a pull request or contact us to discuss your changes.
+
+### Triage Issues [![Open Source Helpers](https://www.codetriage.com/x64dbg/x64dbg/badges/users.svg)](https://www.codetriage.com/x64dbg/x64dbg)
+
+You can triage issues which may include reproducing bug reports or asking for vital information, such as version numbers or reproduction instructions. If you would like to start triaging issues, one easy way to get started is to [subscribe to x64dbg on CodeTriage](https://www.codetriage.com/x64dbg/x64dbg).

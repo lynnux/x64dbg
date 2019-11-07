@@ -27,8 +27,9 @@ GotoDialog::GotoDialog(QWidget* parent, bool allowInvalidExpression, bool allowI
     completer = new QCompleter(this);
     completer->setModel(new SymbolAutoCompleteModel([this]
     {
-        return ui->editExpression->text();
+        return mCompletionText;
     }, completer));
+    completer->setCaseSensitivity(Config()->getBool("Gui", "CaseSensitiveAutoComplete") ? Qt::CaseSensitive : Qt::CaseInsensitive);
     if(!Config()->getBool("Gui", "DisableAutoComplete"))
         ui->editExpression->setCompleter(completer);
     validRangeStart = 0;
@@ -39,6 +40,7 @@ GotoDialog::GotoDialog(QWidget* parent, bool allowInvalidExpression, bool allowI
 
     connect(mValidateThread, SIGNAL(expressionChanged(bool, bool, dsint)), this, SLOT(expressionChanged(bool, bool, dsint)));
     connect(ui->editExpression, SIGNAL(textChanged(QString)), mValidateThread, SLOT(textChanged(QString)));
+    connect(ui->editExpression, SIGNAL(textEdited(QString)), this, SLOT(textEditedSlot(QString)));
     connect(this, SIGNAL(finished(int)), this, SLOT(finishedSlot(int)));
     connect(Config(), SIGNAL(disableAutoCompleteUpdated()), this, SLOT(disableAutoCompleteUpdated()));
 
@@ -78,7 +80,7 @@ void GotoDialog::validateExpression(QString expression)
 void GotoDialog::setInitialExpression(const QString & expression)
 {
     ui->editExpression->setText(expression);
-    validateExpression(expression);
+    emit ui->editExpression->textEdited(expression);
 }
 
 void GotoDialog::expressionChanged(bool validExpression, bool validPointer, dsint value)
@@ -184,6 +186,11 @@ void GotoDialog::finishedSlot(int result)
     if(result == QDialog::Rejected)
         ui->editExpression->setText("");
     ui->editExpression->setFocus();
+}
+
+void GotoDialog::textEditedSlot(QString text)
+{
+    mCompletionText = text;
 }
 
 void GotoDialog::disableAutoCompleteUpdated()

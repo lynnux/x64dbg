@@ -39,6 +39,8 @@ void CPUInfoBox::setupContextMenu()
     mCopyAddressAction = makeAction(tr("Address"), SLOT(copyAddress()));
     mCopyRvaAction = makeAction(tr("RVA"), SLOT(copyRva()));
     mCopyOffsetAction = makeAction(tr("File Offset"), SLOT(copyOffset()));
+    mCopyLineAction = makeAction(tr("Copy Line"), SLOT(copyLineSlot()));
+    setupShortcuts();
 }
 
 int CPUInfoBox::getHeight()
@@ -134,23 +136,27 @@ void CPUInfoBox::disasmSelectionChanged(dsint parVA)
                 valText = valTextSym;
             argMnemonic = !ok ? QString("%1]=[%2").arg(argMnemonic).arg(valText) : valText;
             QString sizeName = "";
-            int memsize = basicinfo.memory.size;
-            switch(memsize)
+            bool knownsize = true;
+            switch(basicinfo.memory.size)
             {
             case size_byte:
-                sizeName = "byte ptr";
+                sizeName = "byte ptr ";
                 break;
             case size_word:
-                sizeName = "word ptr";
+                sizeName = "word ptr ";
                 break;
             case size_dword:
-                sizeName = "dword ptr";
+                sizeName = "dword ptr ";
                 break;
+#ifdef _WIN64
             case size_qword:
-                sizeName = "qword ptr";
+                sizeName = "qword ptr ";
+                break;
+#endif //_WIN64
+            default:
+                knownsize = false;
                 break;
             }
-            sizeName.append(' ');
 
             sizeName += [](SEGMENTREG seg)
             {
@@ -177,12 +183,38 @@ void CPUInfoBox::disasmSelectionChanged(dsint parVA)
                 sizeName = sizeName.toUpper();
 
             if(!DbgMemIsValidReadPtr(arg.value))
+            {
                 setInfoLine(j, sizeName + "[" + argMnemonic + "]=???");
-            else
+            }
+            else if(knownsize)
             {
                 QString addrText = getSymbolicNameStr(arg.memvalue);
                 setInfoLine(j, sizeName + "[" + argMnemonic + "]=" + addrText);
             }
+            else
+            {
+                //TODO: properly support XMM constants
+                QVector<unsigned char> data;
+                data.resize(basicinfo.memory.size);
+                memset(data.data(), 0, data.size());
+                if(DbgMemRead(arg.value, data.data(), data.size()))
+                {
+                    QString hex;
+                    hex.reserve(data.size() * 3);
+                    for(int k = 0; k < data.size(); k++)
+                    {
+                        if(k)
+                            hex.append(' ');
+                        hex.append(ToByteString(data[k]));
+                    }
+                    setInfoLine(j, sizeName + "[" + argMnemonic + "]=" + hex);
+                }
+                else
+                {
+                    setInfoLine(j, sizeName + "[" + argMnemonic + "]=???");
+                }
+            }
+
             j++;
         }
         else
@@ -229,7 +261,10 @@ void CPUInfoBox::disasmSelectionChanged(dsint parVA)
 
         std::sort(data.begin(), data.end(), [](const XREF_RECORD * A, const XREF_RECORD * B)
         {
-            return ((A->type < B->type) || (A->addr < B->addr));
+            if(A->type != B->type)
+                return (A->type < B->type);
+
+            return (A->addr < B->addr);
         });
 
         int t = XREF_NONE;
@@ -656,4 +691,10 @@ void CPUInfoBox::copyOffset()
 void CPUInfoBox::doubleClickedSlot()
 {
     followInDump(curAddr);
+}
+
+void CPUInfoBox::setupShortcuts()
+{
+    mCopyLineAction->setShortcut(ConfigShortcut("ActionCopyLine"));
+    addAction(mCopyLineAction);
 }

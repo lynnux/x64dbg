@@ -7,9 +7,6 @@
 #include "Bridge.h"
 #include "LineEditDialog.h"
 #include "HexEditDialog.h"
-#include "YaraRuleSelectionDialog.h"
-#include "DataCopyDialog.h"
-#include "EntropyDialog.h"
 #include "CPUMultiDump.h"
 #include "GotoDialog.h"
 #include "CPUDisassembly.h"
@@ -26,9 +23,12 @@ CPUDump::CPUDump(CPUDisassembly* disas, CPUMultiDump* multiDump, QWidget* parent
     if(BridgeSettingGetUint("Gui", "AsciiSeparator", &setting))
         mAsciiSeparator = setting & 0xF;
 
+    asciiAddressDumpModeUpdatedSlot();
     setView((ViewEnum_t)ConfigUint("HexDump", "DefaultView"));
 
     connect(this, SIGNAL(selectionUpdated()), this, SLOT(selectionUpdatedSlot()));
+    connect(this, SIGNAL(headerButtonReleased(int)), this, SLOT(headerButtonReleasedSlot(int)));
+    connect(Config(), SIGNAL(asciiAddressDumpModeUpdated()), this, SLOT(asciiAddressDumpModeUpdatedSlot()));
 
     mPluginMenu = multiDump->mDumpPluginMenu;
 
@@ -130,6 +130,10 @@ void CPUDump::setupContextMenu()
     {
         return (DbgGetBpxTypeAt(rvaToVa(getSelectionStart())) & bp_memory) == 0;
     });
+    MenuBuilder* wMemoryReadMenu = new MenuBuilder(this, [this](QMenu*)
+    {
+        return (DbgGetBpxTypeAt(rvaToVa(getSelectionStart())) & bp_memory) == 0;
+    });
     MenuBuilder* wMemoryWriteMenu = new MenuBuilder(this, [this](QMenu*)
     {
         return (DbgGetBpxTypeAt(rvaToVa(getSelectionStart())) & bp_memory) == 0;
@@ -163,11 +167,14 @@ void CPUDump::setupContextMenu()
     wBreakpointMenu->addSeparator();
     wMemoryAccessMenu->addAction(makeAction(DIcon("breakpoint_memory_singleshoot.png"), tr("&Singleshoot"), SLOT(memoryAccessSingleshootSlot())));
     wMemoryAccessMenu->addAction(makeAction(DIcon("breakpoint_memory_restore_on_hit.png"), tr("&Restore on hit"), SLOT(memoryAccessRestoreSlot())));
+    wMemoryReadMenu->addAction(makeAction(DIcon("breakpoint_memory_singleshoot.png"), tr("&Singleshoot"), SLOT(memoryReadSingleshootSlot())));
+    wMemoryReadMenu->addAction(makeAction(DIcon("breakpoint_memory_restore_on_hit.png"), tr("&Restore on hit"), SLOT(memoryReadRestoreSlot())));
     wMemoryWriteMenu->addAction(makeAction(DIcon("breakpoint_memory_singleshoot.png"), tr("&Singleshoot"), SLOT(memoryWriteSingleshootSlot())));
     wMemoryWriteMenu->addAction(makeAction(DIcon("breakpoint_memory_restore_on_hit.png"), tr("&Restore on hit"), SLOT(memoryWriteRestoreSlot())));
     wMemoryExecuteMenu->addAction(makeAction(DIcon("breakpoint_memory_singleshoot.png"), tr("&Singleshoot"), SLOT(memoryExecuteSingleshootSlot())));
     wMemoryExecuteMenu->addAction(makeAction(DIcon("breakpoint_memory_restore_on_hit.png"), tr("&Restore on hit"), SLOT(memoryExecuteRestoreSlot())));
     wBreakpointMenu->addMenu(makeMenu(DIcon("breakpoint_memory_access.png"), tr("Memory, Access")), wMemoryAccessMenu);
+    wBreakpointMenu->addMenu(makeMenu(DIcon("breakpoint_memory_read.png"), tr("Memory, Read")), wMemoryReadMenu);
     wBreakpointMenu->addMenu(makeMenu(DIcon("breakpoint_memory_write.png"), tr("Memory, Write")), wMemoryWriteMenu);
     wBreakpointMenu->addMenu(makeMenu(DIcon("breakpoint_memory_execute.png"), tr("Memory, Execute")), wMemoryExecuteMenu);
     wBreakpointMenu->addAction(makeAction(DIcon("breakpoint_remove.png"), tr("Remove &Memory"), SLOT(memoryRemoveSlot())), [this](QMenu*)
@@ -178,12 +185,9 @@ void CPUDump::setupContextMenu()
 
     mMenuBuilder->addAction(makeShortcutAction(DIcon("search-for.png"), tr("&Find Pattern..."), SLOT(findPattern()), "ActionFindPattern"));
     mMenuBuilder->addAction(makeShortcutAction(DIcon("find.png"), tr("Find &References"), SLOT(findReferencesSlot()), "ActionFindReferences"));
-    mMenuBuilder->addAction(makeShortcutAction(DIcon("yara.png"), tr("&Yara..."), SLOT(yaraSlot()), "ActionYara"));
-    mMenuBuilder->addAction(makeShortcutAction(DIcon("data-copy.png"), tr("Data co&py..."), SLOT(dataCopySlot()), "ActionDataCopy"));
 
     mMenuBuilder->addAction(makeShortcutAction(DIcon("sync.png"), tr("&Sync with expression"), SLOT(syncWithExpressionSlot()), "ActionSyncWithExpression"));
     mMenuBuilder->addAction(makeShortcutAction(DIcon("animal-dog.png"), ArchValue(tr("Watch DWORD"), tr("Watch QWORD")), SLOT(watchSlot()), "ActionWatchDwordQword"));
-    mMenuBuilder->addAction(makeShortcutAction(DIcon("entropy.png"), tr("Entrop&y..."), SLOT(entropySlot()), "ActionEntropy"));
     mMenuBuilder->addAction(makeShortcutAction(DIcon("memmap_alloc_memory.png"), tr("Allocate Memory"), SLOT(allocMemorySlot()), "ActionAllocateMemory"));
 
     MenuBuilder* wGotoMenu = new MenuBuilder(this);
@@ -286,7 +290,7 @@ void CPUDump::getColumnRichText(int col, dsint rva, RichTextPainter::List & rich
     {
         RichTextPainter::CustomRichText_t curData;
         curData.flags = RichTextPainter::FlagColor;
-        curData.textColor = textColor;
+        curData.textColor = mTextColor;
         duint data = 0;
         mMemPage->read((byte_t*)&data, rva, sizeof(duint));
 
@@ -563,6 +567,7 @@ void CPUDump::gotoExpressionSlot()
     if(!mGoto)
         mGoto = new GotoDialog(this);
     mGoto->setWindowTitle(tr("Enter expression to follow in Dump..."));
+    mGoto->setInitialExpression(ToPtrString(rvaToVa(getInitialSelection())));
     if(mGoto->exec() == QDialog::Accepted)
     {
         duint value = DbgValFromString(mGoto->expressionText.toUtf8().constData());
@@ -585,6 +590,10 @@ void CPUDump::gotoFileOffsetSlot()
     mGotoOffset->fileOffset = true;
     mGotoOffset->modName = QString(modname);
     mGotoOffset->setWindowTitle(tr("Goto File Offset in %1").arg(QString(modname)));
+    duint addr = rvaToVa(getInitialSelection());
+    duint offset = DbgFunctions()->VaToFileOffset(addr);
+    if(offset)
+        mGotoOffset->setInitialExpression(ToHexString(offset));
     if(mGotoOffset->exec() != QDialog::Accepted)
         return;
     duint value = DbgValFromString(mGotoOffset->expressionText.toUtf8().constData());
@@ -630,8 +639,8 @@ void CPUDump::hexAsciiSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewHexAscii);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //hex byte
     wColDesc.itemCount = 16;
@@ -664,8 +673,8 @@ void CPUDump::hexUnicodeSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewHexUnicode);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //hex byte
     wColDesc.itemCount = 16;
@@ -702,8 +711,8 @@ void CPUDump::hexCodepageSlot()
     auto codepage = dialog.getSelectedCodepage();
 
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //hex byte
     wColDesc.itemCount = 16;
@@ -727,9 +736,11 @@ void CPUDump::hexCodepageSlot()
 
 void CPUDump::hexLastCodepageSlot()
 {
+    Config()->setUint("HexDump", "DefaultView", (duint)ViewHexCodepage);
+
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
     duint lastCodepage;
     auto allCodecs = QTextCodec::availableCodecs();
     if(!BridgeSettingGetUint("Misc", "LastCodepage", &lastCodepage) || lastCodepage >= duint(allCodecs.size()))
@@ -757,8 +768,10 @@ void CPUDump::hexLastCodepageSlot()
 
 void CPUDump::textLastCodepageSlot()
 {
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    Config()->setUint("HexDump", "DefaultView", (duint)ViewTextCodepage);
+
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
     duint lastCodepage;
     auto allCodecs = QTextCodec::availableCodecs();
     if(!BridgeSettingGetUint("Misc", "LastCodepage", &lastCodepage) || lastCodepage >= duint(allCodecs.size()))
@@ -780,8 +793,8 @@ void CPUDump::textAsciiSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewTextAscii);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //ascii byte
     wColDesc.itemCount = 64;
@@ -806,8 +819,8 @@ void CPUDump::textUnicodeSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewTextUnicode);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //unicode short
     wColDesc.itemCount = 64;
@@ -835,8 +848,8 @@ void CPUDump::textCodepageSlot()
         return;
     auto codepage = dialog.getSelectedCodepage();
 
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //text (in code page)
     wColDesc.itemCount = 64;
@@ -854,8 +867,8 @@ void CPUDump::integerSignedByteSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewIntegerSignedByte);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //signed short
     wColDesc.itemCount = 8;
@@ -879,8 +892,8 @@ void CPUDump::integerSignedShortSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewIntegerSignedShort);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //signed short
     wColDesc.itemCount = 8;
@@ -904,8 +917,8 @@ void CPUDump::integerSignedLongSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewIntegerSignedLong);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //signed long
     wColDesc.itemCount = 4;
@@ -929,8 +942,8 @@ void CPUDump::integerSignedLongLongSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewIntegerSignedLongLong);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //signed long long
     wColDesc.itemCount = 2;
@@ -954,8 +967,8 @@ void CPUDump::integerUnsignedByteSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewIntegerUnsignedByte);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //unsigned short
     wColDesc.itemCount = 8;
@@ -979,8 +992,8 @@ void CPUDump::integerUnsignedShortSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewIntegerUnsignedShort);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //unsigned short
     wColDesc.itemCount = 8;
@@ -1004,8 +1017,8 @@ void CPUDump::integerUnsignedLongSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewIntegerUnsignedLong);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //unsigned long
     wColDesc.itemCount = 4;
@@ -1029,8 +1042,8 @@ void CPUDump::integerUnsignedLongLongSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewIntegerUnsignedLongLong);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //unsigned long long
     wColDesc.itemCount = 2;
@@ -1054,8 +1067,8 @@ void CPUDump::integerHexShortSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewIntegerHexShort);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //hex short
     wColDesc.itemCount = 8;
@@ -1079,8 +1092,8 @@ void CPUDump::integerHexLongSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewIntegerHexLong);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //hex long
     wColDesc.itemCount = 4;
@@ -1104,8 +1117,8 @@ void CPUDump::integerHexLongLongSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewIntegerHexLongLong);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //hex long long
     wColDesc.itemCount = 2;
@@ -1129,8 +1142,8 @@ void CPUDump::floatFloatSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewFloatFloat);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //float dword
     wColDesc.itemCount = 4;
@@ -1154,8 +1167,8 @@ void CPUDump::floatDoubleSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewFloatDouble);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //float qword
     wColDesc.itemCount = 2;
@@ -1179,8 +1192,8 @@ void CPUDump::floatLongDoubleSlot()
 {
     Config()->setUint("HexDump", "DefaultView", (duint)ViewFloatLongDouble);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //float qword
     wColDesc.itemCount = 2;
@@ -1202,10 +1215,16 @@ void CPUDump::floatLongDoubleSlot()
 
 void CPUDump::addressSlot()
 {
+    if(mAsciiAddressDumpMode)
+    {
+        addressAsciiSlot();
+        return;
+    }
+
     Config()->setUint("HexDump", "DefaultView", (duint)ViewAddress);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
 
     wColDesc.isData = true; //void*
     wColDesc.itemCount = 1;
@@ -1217,7 +1236,109 @@ void CPUDump::addressSlot()
     wColDesc.data.itemSize = Dword;
     wColDesc.data.dwordMode = HexDword;
 #endif
-    appendResetDescriptor(8 + charwidth * 2 * sizeof(duint), tr("Address"), false, wColDesc);
+    appendResetDescriptor(8 + charwidth * 2 * sizeof(duint), tr("Value"), false, wColDesc);
+
+    wColDesc.isData = false; //comments
+    wColDesc.itemCount = 1;
+    wColDesc.separator = 0;
+    dDesc.itemSize = Byte;
+    dDesc.byteMode = AsciiByte;
+    wColDesc.data = dDesc;
+    appendDescriptor(0, tr("Comments"), false, wColDesc);
+
+    reloadData();
+}
+
+void CPUDump::addressAsciiSlot()
+{
+    if(!mAsciiAddressDumpMode)
+    {
+        addressSlot();
+        return;
+    }
+
+    Config()->setUint("HexDump", "DefaultView", (duint)ViewAddressAscii);
+    int charwidth = getCharWidth();
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
+
+    wColDesc.isData = true; //void*
+    wColDesc.itemCount = 1;
+    wColDesc.separator = 0;
+#ifdef _WIN64
+    wColDesc.data.itemSize = Qword;
+    wColDesc.data.qwordMode = HexQword;
+#else
+    wColDesc.data.itemSize = Dword;
+    wColDesc.data.dwordMode = HexDword;
+#endif
+    appendResetDescriptor(8 + charwidth * 2 * sizeof(duint), tr("Value"), false, wColDesc);
+
+    wColDesc.isData = true;
+    wColDesc.separator = 0;
+#ifdef _WIN64
+    wColDesc.itemCount = 8;
+#else
+    wColDesc.itemCount = 4;
+#endif
+    wColDesc.data.itemSize = Byte;
+    wColDesc.data.byteMode = AsciiByte;
+    wColDesc.columnSwitch = [this]()
+    {
+        this->setView(ViewAddressUnicode);
+    };
+    appendDescriptor(8 + charwidth * wColDesc.itemCount, tr("ASCII"), true, wColDesc);
+
+    wColDesc.isData = false; //comments
+    wColDesc.itemCount = 1;
+    wColDesc.separator = 0;
+    dDesc.itemSize = Byte;
+    dDesc.byteMode = AsciiByte;
+    wColDesc.data = dDesc;
+    appendDescriptor(0, tr("Comments"), false, wColDesc);
+
+    reloadData();
+}
+
+void CPUDump::addressUnicodeSlot()
+{
+    if(!mAsciiAddressDumpMode)
+    {
+        addressSlot();
+        return;
+    }
+
+    Config()->setUint("HexDump", "DefaultView", (duint)ViewAddressUnicode);
+    int charwidth = getCharWidth();
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
+
+    wColDesc.isData = true; //void*
+    wColDesc.itemCount = 1;
+    wColDesc.separator = 0;
+#ifdef _WIN64
+    wColDesc.data.itemSize = Qword;
+    wColDesc.data.qwordMode = HexQword;
+#else
+    wColDesc.data.itemSize = Dword;
+    wColDesc.data.dwordMode = HexDword;
+#endif
+    appendResetDescriptor(8 + charwidth * 2 * sizeof(duint), tr("Value"), false, wColDesc);
+
+    wColDesc.isData = true;
+    wColDesc.separator = 0;
+#ifdef _WIN64
+    wColDesc.itemCount = 4;
+#else
+    wColDesc.itemCount = 2;
+#endif
+    wColDesc.data.itemSize = Word;
+    wColDesc.data.wordMode = UnicodeWord;
+    wColDesc.columnSwitch = [this]()
+    {
+        this->setView(ViewAddressAscii);
+    };
+    appendDescriptor(8 + charwidth * wColDesc.itemCount, tr("UNICODE"), true, wColDesc);
 
     wColDesc.isData = false; //comments
     wColDesc.itemCount = 1;
@@ -1239,7 +1360,7 @@ void CPUDump::selectionGet(SELECTIONDATA* selection)
 {
     selection->start = rvaToVa(getSelectionStart());
     selection->end = rvaToVa(getSelectionEnd());
-    Bridge::getBridge()->setResult(1);
+    Bridge::getBridge()->setResult(BridgeResult::SelectionGet, 1);
 }
 
 void CPUDump::selectionSet(const SELECTIONDATA* selection)
@@ -1250,13 +1371,13 @@ void CPUDump::selectionSet(const SELECTIONDATA* selection)
     dsint end = selection->end;
     if(start < selMin || start >= selMax || end < selMin || end >= selMax) //selection out of range
     {
-        Bridge::getBridge()->setResult(0);
+        Bridge::getBridge()->setResult(BridgeResult::SelectionSet, 0);
         return;
     }
     setSingleSelection(start - selMin);
     expandSelectionUpTo(end - selMin);
     reloadData();
-    Bridge::getBridge()->setResult(1);
+    Bridge::getBridge()->setResult(BridgeResult::SelectionSet, 1);
 }
 
 void CPUDump::memoryAccessSingleshootSlot()
@@ -1269,6 +1390,18 @@ void CPUDump::memoryAccessRestoreSlot()
 {
     QString addr_text = ToPtrString(rvaToVa(getSelectionStart()));
     DbgCmdExec(QString("bpm " + addr_text + ", 1, a").toUtf8().constData());
+}
+
+void CPUDump::memoryReadSingleshootSlot()
+{
+    QString addr_text = ToPtrString(rvaToVa(getSelectionStart()));
+    DbgCmdExec(QString("bpm " + addr_text + ", 0, r").toUtf8().constData());
+}
+
+void CPUDump::memoryReadRestoreSlot()
+{
+    QString addr_text = ToPtrString(rvaToVa(getSelectionStart()));
+    DbgCmdExec(QString("bpm " + addr_text + ", 1, r").toUtf8().constData());
 }
 
 void CPUDump::memoryWriteSingleshootSlot()
@@ -1481,6 +1614,7 @@ void CPUDump::findPattern()
 {
     HexEditDialog hexEdit(this);
     hexEdit.showEntireBlock(true);
+    hexEdit.isDataCopiable(false);
     hexEdit.mHexEdit->setOverwriteMode(false);
     hexEdit.setWindowTitle(tr("Find Pattern..."));
     if(hexEdit.exec() != QDialog::Accepted)
@@ -1545,43 +1679,6 @@ void CPUDump::selectionUpdatedSlot()
     if(DbgFunctions()->ModNameFromAddr(rvaToVa(getSelectionStart()), mod, true))
         info = QString(mod) + "";
     GuiAddStatusBarMessage(QString(info + ": " + selStart + " -> " + selEnd + QString().sprintf(" (0x%.8X bytes)\n", getSelectionEnd() - getSelectionStart() + 1)).toUtf8().constData());
-}
-
-void CPUDump::yaraSlot()
-{
-    YaraRuleSelectionDialog yaraDialog(this);
-    if(yaraDialog.exec() == QDialog::Accepted)
-    {
-        QString addrText = ToPtrString(rvaToVa(getSelectionStart()));
-        DbgCmdExec(QString("yara \"%0\",%1").arg(yaraDialog.getSelectedFile()).arg(addrText).toUtf8().constData());
-        emit displayReferencesWidget();
-    }
-}
-
-void CPUDump::dataCopySlot()
-{
-    dsint selStart = getSelectionStart();
-    dsint selSize = getSelectionEnd() - selStart + 1;
-    QVector<byte_t> data;
-    data.resize(selSize);
-    mMemPage->read(data.data(), selStart, selSize);
-    DataCopyDialog dataDialog(&data, this);
-    dataDialog.exec();
-}
-
-void CPUDump::entropySlot()
-{
-    dsint selStart = getSelectionStart();
-    dsint selSize = getSelectionEnd() - selStart + 1;
-    QVector<byte_t> data;
-    data.resize(selSize);
-    mMemPage->read(data.data(), selStart, selSize);
-
-    EntropyDialog entropyDialog(this);
-    entropyDialog.setWindowTitle(tr("Entropy (Address: %1, Size: %2)").arg(ToPtrString(rvaToVa(selStart))).arg(ToHexString(selSize)));
-    entropyDialog.show();
-    entropyDialog.GraphMemory(data.constData(), data.size());
-    entropyDialog.exec();
 }
 
 void CPUDump::syncWithExpressionSlot()
@@ -1701,6 +1798,18 @@ void CPUDump::setView(ViewEnum_t view)
     case ViewAddress:
         addressSlot();
         break;
+    case ViewAddressAscii:
+        addressAsciiSlot();
+        break;
+    case ViewAddressUnicode:
+        addressUnicodeSlot();
+        break;
+    case ViewHexCodepage:
+        hexLastCodepageSlot();
+        break;
+    case ViewTextCodepage:
+        textLastCodepageSlot();
+        break;
     default:
         hexAsciiSlot();
         break;
@@ -1710,4 +1819,27 @@ void CPUDump::setView(ViewEnum_t view)
 void CPUDump::followInMemoryMapSlot()
 {
     DbgCmdExec(QString("memmapdump %1").arg(ToHexString(rvaToVa(getSelectionStart()))).toUtf8().constData());
+}
+
+void CPUDump::headerButtonReleasedSlot(int colIndex)
+{
+    auto callback = mDescriptor[colIndex].columnSwitch;
+    if(callback)
+        callback();
+}
+
+void CPUDump::asciiAddressDumpModeUpdatedSlot()
+{
+    duint setting = 0;
+    mAsciiAddressDumpMode = BridgeSettingGetUint("Gui", "AsciiAddressDumpMode", &setting) && setting;
+    auto defaultView = (ViewEnum_t)ConfigUint("HexDump", "DefaultView");
+    printf("defaultView: %d\n", defaultView);
+    switch(defaultView)
+    {
+    case ViewAddress:
+    case ViewAddressAscii:
+    case ViewAddressUnicode:
+        setView(defaultView);
+        break;
+    }
 }

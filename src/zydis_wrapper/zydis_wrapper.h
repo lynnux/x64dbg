@@ -3,6 +3,7 @@
 
 #include "Zydis/Zydis.h"
 #include <functional>
+#include <string>
 
 #define MAX_DISASM_BUFFER 16
 
@@ -12,7 +13,7 @@ public:
     static void GlobalInitialize();
     static void GlobalFinalize();
     Zydis();
-    Zydis(const Zydis & capstone) = delete;
+    Zydis(const Zydis & zydis) = delete;
     ~Zydis();
     bool Disassemble(size_t addr, const unsigned char data[MAX_DISASM_BUFFER]);
     bool Disassemble(size_t addr, const unsigned char* data, int size);
@@ -32,7 +33,6 @@ public:
     int OpCount() const;
     const ZydisDecodedOperand & operator[](int index) const;
     std::string Mnemonic() const;
-    std::string MnemonicId() const;
     const char* MemSizeName(int size) const;
     size_t BranchDestination() const;
     size_t ResolveOpValue(int opindex, const std::function<size_t(ZydisRegister)> & resolveReg) const;
@@ -40,6 +40,7 @@ public:
     static bool IsBranchGoingToExecute(ZydisMnemonic id, size_t cflags, size_t ccx);
     bool IsConditionalGoingToExecute(size_t cflags, size_t ccx) const;
     static bool IsConditionalGoingToExecute(ZydisMnemonic id, size_t cflags, size_t ccx);
+    void BytesGroup(uint8_t* prefixSize, uint8_t* opcodeSize, uint8_t* group1Size, uint8_t* group2Size, uint8_t* group3Size) const;
 
     enum RegAccessInfo : uint8_t
     {

@@ -251,6 +251,21 @@ BRIDGE_IMPEXP int BridgeGetDbgVersion()
     return DBG_VERSION;
 }
 
+BRIDGE_IMPEXP bool BridgeIsProcessElevated()
+{
+    SID_IDENTIFIER_AUTHORITY NtAuthority = SECURITY_NT_AUTHORITY;
+    PSID SecurityIdentifier;
+    if(!AllocateAndInitializeSid(&NtAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &SecurityIdentifier))
+        return 0;
+
+    BOOL IsAdminMember;
+    if(!CheckTokenMembership(NULL, SecurityIdentifier, &IsAdminMember))
+        IsAdminMember = FALSE;
+
+    FreeSid(SecurityIdentifier);
+    return !!IsAdminMember;
+}
+
 BRIDGE_IMPEXP bool DbgMemRead(duint va, void* dest, duint size)
 {
 #ifdef _DEBUG
@@ -342,7 +357,7 @@ BRIDGE_IMPEXP bool DbgGetLabelAt(duint addr, SEGMENTREG segment, char* text) //(
         BRIDGE_ADDRINFO ptrinfo = info;
         if(!_dbg_addrinfoget(addr_, SEG_DEFAULT, &ptrinfo))
             return false;
-        sprintf_s(info.label, "&%s", ptrinfo.label);
+        _snprintf_s(info.label, _TRUNCATE, "&%s", ptrinfo.label);
     }
     strcpy_s(text, MAX_LABEL_SIZE, info.label);
     return true;
@@ -1070,9 +1085,14 @@ BRIDGE_IMPEXP duint DbgEval(const char* expression, bool* success)
     return value;
 }
 
-BRIDGE_IMPEXP void DbgMenuPrepare(int hMenu)
+BRIDGE_IMPEXP void DbgMenuPrepare(GUIMENUTYPE hMenu)
 {
     _dbg_sendmessage(DBG_MENU_PREPARE, (void*)hMenu, nullptr);
+}
+
+BRIDGE_IMPEXP void DbgGetSymbolInfo(const SYMBOLPTR* symbolptr, SYMBOLINFO* info)
+{
+    _dbg_sendmessage(DBG_GET_SYMBOL_INFO, (void*)symbolptr, info);
 }
 
 BRIDGE_IMPEXP const char* GuiTranslateText(const char* Source)
@@ -1391,12 +1411,12 @@ BRIDGE_IMPEXP void GuiMenuRemove(int hEntryMenu)
     _gui_sendmessage(GUI_MENU_REMOVE, (void*)(duint)hEntryMenu, 0);
 }
 
-BRIDGE_IMPEXP bool GuiSelectionGet(int hWindow, SELECTIONDATA* selection)
+BRIDGE_IMPEXP bool GuiSelectionGet(GUISELECTIONTYPE hWindow, SELECTIONDATA* selection)
 {
     return !!_gui_sendmessage(GUI_SELECTION_GET, (void*)(duint)hWindow, selection);
 }
 
-BRIDGE_IMPEXP bool GuiSelectionSet(int hWindow, const SELECTIONDATA* selection)
+BRIDGE_IMPEXP bool GuiSelectionSet(GUISELECTIONTYPE hWindow, const SELECTIONDATA* selection)
 {
     return !!_gui_sendmessage(GUI_SELECTION_SET, (void*)(duint)hWindow, (void*)selection);
 }
@@ -1456,9 +1476,14 @@ BRIDGE_IMPEXP void GuiUpdateSEHChain()
     _gui_sendmessage(GUI_UPDATE_SEHCHAIN, 0, 0);
 }
 
-BRIDGE_IMPEXP void GuiLoadSourceFile(const char* path, int line)
+extern "C" __declspec(dllexport) void GuiLoadSourceFile(const char* path, int line)
 {
-    _gui_sendmessage(GUI_LOAD_SOURCE_FILE, (void*)path, (void*)line);
+    return;
+}
+
+BRIDGE_IMPEXP void GuiLoadSourceFileEx(const char* path, duint addr)
+{
+    _gui_sendmessage(GUI_LOAD_SOURCE_FILE, (void*)path, (void*)addr);
 }
 
 BRIDGE_IMPEXP void GuiMenuSetIcon(int hMenu, const ICONDATA* icon)
@@ -1483,17 +1508,17 @@ BRIDGE_IMPEXP void GuiMenuSetVisible(int hMenu, bool visible)
 
 BRIDGE_IMPEXP void GuiMenuSetEntryVisible(int hEntry, bool visible)
 {
-    _gui_sendmessage(GUI_MENU_SET_VISIBLE, (void*)hEntry, (void*)visible);
+    _gui_sendmessage(GUI_MENU_SET_ENTRY_VISIBLE, (void*)hEntry, (void*)visible);
 }
 
 BRIDGE_IMPEXP void GuiMenuSetName(int hMenu, const char* name)
 {
-    _gui_sendmessage(GUI_MENU_SET_VISIBLE, (void*)hMenu, (void*)name);
+    _gui_sendmessage(GUI_MENU_SET_NAME, (void*)hMenu, (void*)name);
 }
 
 BRIDGE_IMPEXP void GuiMenuSetEntryName(int hEntry, const char* name)
 {
-    _gui_sendmessage(GUI_MENU_SET_VISIBLE, (void*)hEntry, (void*)name);
+    _gui_sendmessage(GUI_MENU_SET_ENTRY_NAME, (void*)hEntry, (void*)name);
 }
 
 BRIDGE_IMPEXP void GuiMenuSetEntryHotkey(int hEntry, const char* hack)
@@ -1523,7 +1548,10 @@ BRIDGE_IMPEXP void GuiCloseQWidgetTab(void* qWidget)
 
 BRIDGE_IMPEXP void GuiExecuteOnGuiThread(GUICALLBACK cbGuiThread)
 {
-    _gui_sendmessage(GUI_EXECUTE_ON_GUI_THREAD, (void*)cbGuiThread, nullptr);
+    GuiExecuteOnGuiThreadEx([](void* cb)
+    {
+        ((GUICALLBACK)cb)();
+    }, cbGuiThread);
 }
 
 BRIDGE_IMPEXP void GuiUpdateTimeWastedCounter()
@@ -1688,6 +1716,21 @@ BRIDGE_IMPEXP void GuiOpenTraceFile(const char* fileName)
 {
     CHECK_GUI_UPDATE_DISABLED
     _gui_sendmessage(GUI_OPEN_TRACE_FILE, (void*)fileName, nullptr);
+}
+
+BRIDGE_IMPEXP void GuiInvalidateSymbolSource(duint base)
+{
+    _gui_sendmessage(GUI_INVALIDATE_SYMBOL_SOURCE, (void*)base, nullptr);
+}
+
+BRIDGE_IMPEXP void GuiExecuteOnGuiThreadEx(GUICALLBACKEX cbGuiThread, void* userdata)
+{
+    _gui_sendmessage(GUI_EXECUTE_ON_GUI_THREAD, (void*)cbGuiThread, userdata);
+}
+
+BRIDGE_IMPEXP void GuiGetCurrentGraph(BridgeCFGraphList* graphList)
+{
+    _gui_sendmessage(GUI_GET_CURRENT_GRAPH, graphList, nullptr);
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)

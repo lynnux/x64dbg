@@ -3,10 +3,13 @@
 
 #include "_global.h"
 
+extern duint symbolDownloadingBase;
+
 void SymEnum(duint Base, CBSYMBOLENUM EnumCallback, void* UserData);
 void SymEnumFromCache(duint Base, CBSYMBOLENUM EnumCallback, void* UserData);
 bool SymGetModuleList(std::vector<SYMBOLMODULEINFO>* List);
 void SymUpdateModuleList();
+bool SymDownloadSymbol(duint Base, const char* SymbolStore);
 void SymDownloadAllSymbols(const char* SymbolStore);
 bool SymAddrFromName(const char* Name, duint* Address);
 String SymGetSymbolicName(duint Address);
@@ -19,5 +22,7 @@ String SymGetSymbolicName(duint Address);
 \return true if it succeeds, false if it fails.
 */
 bool SymGetSourceLine(duint Cip, char* FileName, int* Line, DWORD* displacement = nullptr);
+
+bool SymGetSourceAddr(duint Module, const char* FileName, int Line, duint* Address);
 
 #endif // _SYMBOLINFO_H

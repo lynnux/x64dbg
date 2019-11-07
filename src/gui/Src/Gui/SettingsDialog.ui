@@ -33,7 +33,7 @@
       <bool>true</bool>
      </property>
      <property name="currentIndex">
-      <number>4</number>
+      <number>0</number>
      </property>
      <widget class="QWidget" name="tabEvents">
       <attribute name="title">
@@ -490,6 +490,20 @@
         </widget>
        </item>
        <item>
+        <widget class="QCheckBox" name="chkHidePointerSizes">
+         <property name="text">
+          <string>Hide pointer sizes</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkHideNormalSegments">
+         <property name="text">
+          <string>Only show FS/GS segments</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QCheckBox" name="chkMemorySpaces">
          <property name="text">
           <string>Memory Spaces</string>
@@ -679,6 +693,13 @@
         </widget>
        </item>
        <item>
+        <widget class="QCheckBox" name="chkGraphZoomMode">
+         <property name="text">
+          <string>Graph zoom mode</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QCheckBox" name="chkShowExitConfirmation">
          <property name="text">
           <string>Show exit confirmation dialog</string>
@@ -689,6 +710,13 @@
         <widget class="QCheckBox" name="chkDisableAutoComplete">
          <property name="text">
           <string>Disable auto completion in goto dialog</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkAsciiAddressDumpMode">
+         <property name="text">
+          <string>Show ASCII/Unicode in address dump mode</string>
          </property>
         </widget>
        </item>
@@ -824,6 +852,13 @@
         <widget class="QCheckBox" name="chkQueryWorkingSet">
          <property name="text">
           <string>Query working set before reading memory</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="chkTransparentExceptionStepping">
+         <property name="text">
+          <string>Transparent exception stepping*</string>
          </property>
         </widget>
        </item>

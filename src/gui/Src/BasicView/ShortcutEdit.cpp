@@ -63,7 +63,6 @@ void ShortcutEdit::keyPressEvent(QKeyEvent* event)
         }
     }
 
-
     // display key combination
     setText(QKeySequence(keyInt).toString(QKeySequence::NativeText));
     // do not forward keypress-event

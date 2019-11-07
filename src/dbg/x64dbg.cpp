@@ -25,7 +25,7 @@
 #include "exception.h"
 #include "expressionfunctions.h"
 #include "formatfunctions.h"
-#include "yara/yara.h"
+#include "stringformat.h"
 #include "dbghelp_safe.h"
 
 static MESSAGE_STACK* gMsgStack = 0;
@@ -272,9 +272,8 @@ static void registercommands()
     dbgcmdnew("reffind,findref,ref", cbInstrRefFind, true); //find references to a value
     dbgcmdnew("reffindrange,findrefrange,refrange", cbInstrRefFindRange, true);
     dbgcmdnew("refstr,strref", cbInstrRefStr, true); //find string references
+    dbgcmdnew("reffunctionpointer", cbInstrRefFuncionPointer, true); //find function pointers
     dbgcmdnew("modcallfind", cbInstrModCallFind, true); //find intermodular calls
-    dbgcmdnew("yara", cbInstrYara, true); //yara test command
-    dbgcmdnew("yaramod", cbInstrYaramod, true); //yara rule on module
     dbgcmdnew("setmaxfindresult,findsetmaxresult", cbInstrSetMaxFindResult, false); //set the maximum number of occurences found
     dbgcmdnew("guidfind,findguid", cbInstrGUIDFind, true); //find GUID references TODO: undocumented
 
@@ -325,6 +324,8 @@ static void registercommands()
 
     dbgcmdnew("virtualmod", cbInstrVirtualmod, true); //virtual module
     dbgcmdnew("symdownload,downloadsym", cbDebugDownloadSymbol, true); //download symbols
+    dbgcmdnew("symload,loadsym", cbDebugLoadSymbol, true); //load symbols
+    dbgcmdnew("symunload,unloadsym", cbDebugUnloadSymbol, true); //unload symbols
     dbgcmdnew("imageinfo,modimageinfo", cbInstrImageinfo, true); //print module image information
     dbgcmdnew("GetRelocSize,grs", cbInstrGetRelocSize, true); //get relocation table size
     dbgcmdnew("exhandlers", cbInstrExhandlers, true); //enumerate exception handlers
@@ -379,6 +380,7 @@ static void registercommands()
     dbgcmdnew("msgyn", cbScriptMsgyn, false);
     dbgcmdnew("log", cbInstrLog, false); //log command with superawesome hax
     dbgcmdnew("scriptdll,dllscript", cbScriptDll, false); //execute a script DLL
+    dbgcmdnew("scriptcmd", cbScriptCmd, false); // execute a script command TODO: undocumented
 
     //gui
     dbgcmdnew("disasm,dis,d", cbDebugDisasm, true); //doDisasm
@@ -503,7 +505,10 @@ static DWORD WINAPI DbgScriptDllExecThread(void* a)
     if(FreeLibrary(hScriptDll))
         dputs(QT_TRANSLATE_NOOP("DBG", "success!\n"));
     else
-        dprintf(QT_TRANSLATE_NOOP("DBG", "failure (%08X)...\n"), GetLastError());
+    {
+        String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+        dprintf(QT_TRANSLATE_NOOP("DBG", "failure (%s)...\n"), error.c_str());
+    }
 
     return 0;
 }
@@ -537,17 +542,26 @@ static bool DbgScriptDllExec(const char* dll)
                 dputs(QT_TRANSLATE_NOOP("DBG", "[Script DLL] \"Start\" returned!\n"));
             }
             else
-                dprintf(QT_TRANSLATE_NOOP("DBG", "[Script DLL] Failed to find the exports \"AsyncStart\" or \"Start\" (%s)!\n"), ErrorCodeToName(GetLastError()).c_str());
+            {
+                String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+                dprintf(QT_TRANSLATE_NOOP("DBG", "[Script DLL] Failed to find the exports \"AsyncStart\" or \"Start\" (%s)!\n"), error.c_str());
+            }
 
             dprintf(QT_TRANSLATE_NOOP("DBG", "[Script DLL] Calling FreeLibrary..."));
             if(FreeLibrary(hScriptDll))
                 dputs(QT_TRANSLATE_NOOP("DBG", "success!\n"));
             else
-                dprintf(QT_TRANSLATE_NOOP("DBG", "failure (%s)...\n"), ErrorCodeToName(GetLastError()).c_str());
+            {
+                String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+                dprintf(QT_TRANSLATE_NOOP("DBG", "failure (%s)...\n"), error.c_str());
+            }
         }
     }
     else
-        dprintf(QT_TRANSLATE_NOOP("DBG", "[Script DLL] LoadLibary failed (%s)!\n"), ErrorCodeToName(GetLastError()).c_str());
+    {
+        String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+        dprintf(QT_TRANSLATE_NOOP("DBG", "[Script DLL] LoadLibary failed (%s)!\n"), error.c_str());
+    }
 
     return true;
 }
@@ -632,11 +646,8 @@ extern "C" DLL_EXPORT const char* _dbg_dbginit()
     dputs(QT_TRANSLATE_NOOP("DBG", "Setting JSON memory management functions..."));
     json_set_alloc_funcs(json_malloc, json_free);
     //#endif //ENABLE_MEM_TRACE
-    dputs(QT_TRANSLATE_NOOP("DBG", "Initializing capstone..."));
+    dputs(QT_TRANSLATE_NOOP("DBG", "Initializing Zydis..."));
     Zydis::GlobalInitialize();
-    dputs(QT_TRANSLATE_NOOP("DBG", "Initializing Yara..."));
-    if(yr_initialize() != ERROR_SUCCESS)
-        return "Failed to initialize Yara!";
     dputs(QT_TRANSLATE_NOOP("DBG", "Getting directory information..."));
 
     strcpy_s(scriptDllDir, szProgramDir);
@@ -737,7 +748,7 @@ extern "C" DLL_EXPORT const char* _dbg_dbginit()
         DbgCmdExec(StringUtils::Utf16ToUtf8(StringUtils::sprintf(L"init \"%s\", \"%s\"", escape(argv[1]).c_str(), escape(argv[2]).c_str())).c_str());
     else if(argc == 4) //3 arguments (init filename, cmdline, currentdir)
         DbgCmdExec(StringUtils::Utf16ToUtf8(StringUtils::sprintf(L"init \"%s\", \"%s\", \"%s\"", escape(argv[1]).c_str(), escape(argv[2]).c_str(), escape(argv[3]).c_str())).c_str());
-    else if(argc == 5 && !_wcsicmp(argv[1], L"-a") && !_wcsicmp(argv[3], L"-e")) //4 arguments (JIT)
+    else if(argc == 5 && (!_wcsicmp(argv[1], L"-a") || !_wcsicmp(argv[1], L"-p")) && !_wcsicmp(argv[3], L"-e")) //4 arguments (JIT)
         DbgCmdExec(StringUtils::Utf16ToUtf8(StringUtils::sprintf(L"attach .%s, .%s", argv[2], argv[4])).c_str()); //attach pid, event
     else if(argc == 5 && !_wcsicmp(argv[1], L"-p") && !_wcsicmp(argv[3], L"-tid")) //4 arguments (PLMDebug)
         DbgCmdExec(StringUtils::Utf16ToUtf8(StringUtils::sprintf(L"attach .%s, 0, .%s", argv[2], argv[4])).c_str()); //attach pid, 0, tid
@@ -751,25 +762,19 @@ extern "C" DLL_EXPORT const char* _dbg_dbginit()
 */
 extern "C" DLL_EXPORT void _dbg_dbgexitsignal()
 {
+    dputs(QT_TRANSLATE_NOOP("DBG", "Stopping command thread..."));
+    bStopCommandLoopThread = true;
+    MsgFreeStack(gMsgStack);
+    WaitForThreadTermination(hCommandLoopThread);
     dputs(QT_TRANSLATE_NOOP("DBG", "Stopping running debuggee..."));
-    cbDebugStop(0, 0);
-    dputs(QT_TRANSLATE_NOOP("DBG", "Waiting for the debuggee to be stopped..."));
-    if(!waitfor(WAITID_STOP, 10000)) //after this, debugging stopped
-    {
-        dputs(QT_TRANSLATE_NOOP("DBG", "The debuggee does not close after 10 seconds. Probably the debugger state has been corrupted."));
-    }
+    cbDebugStop(0, 0); //after this, debugging stopped
     dputs(QT_TRANSLATE_NOOP("DBG", "Aborting scripts..."));
     scriptabort();
     dputs(QT_TRANSLATE_NOOP("DBG", "Unloading plugins..."));
     pluginunloadall();
-    dputs(QT_TRANSLATE_NOOP("DBG", "Stopping command thread..."));
-    bStopCommandLoopThread = true;
-    MsgFreeStack(gMsgStack);
-    WaitForThreadTermination(hCommandLoopThread, 10000);
     dputs(QT_TRANSLATE_NOOP("DBG", "Cleaning up allocated data..."));
     cmdfree();
     varfree();
-    yr_finalize();
     Zydis::GlobalFinalize();
     dputs(QT_TRANSLATE_NOOP("DBG", "Cleaning up wait objects..."));
     waitdeinitialize();

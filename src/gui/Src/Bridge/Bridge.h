@@ -5,9 +5,12 @@
 #include <QObject>
 #include <QWidget>
 #include <QMutex>
+#include <QMenu>
 #include "Imports.h"
-#include "ReferenceManager.h"
 #include "BridgeResult.h"
+
+class ReferenceManager;
+class SymbolView;
 
 class Bridge : public QObject
 {
@@ -30,21 +33,22 @@ public:
     static void CopyToClipboard(const QString & text, const QString & htmlText);
 
     //result function
-    void setResult(dsint result = 0);
+    void setResult(BridgeResult::Type type, dsint result = 0);
 
     //helper functions
-    void emitMenuAddToList(QWidget* parent, QMenu* menu, int hMenu, int hParentMenu = -1);
+    void emitMenuAddToList(QWidget* parent, QMenu* menu, GUIMENUTYPE hMenu, int hParentMenu = -1);
     void setDbgStopped();
 
     //Public variables
     void* winId = nullptr;
     ReferenceManager* referenceManager = nullptr;
-    QWidget* snowmanView = nullptr;
     bool mIsRunning = false;
+    duint mLastCip = 0;
+    SymbolView* symbolView = nullptr;
 
 signals:
     void disassembleAt(dsint va, dsint eip);
-    void repaintGui();
+    void updateDisassembly();
     void dbgStateChanged(DBGSTATE state);
     void addMsgToLog(QByteArray msg);
     void clearLog();
@@ -82,7 +86,7 @@ signals:
     void updateMemory();
     void addRecentFile(QString file);
     void setLastException(unsigned int exceptionCode);
-    void menuAddMenuToList(QWidget* parent, QMenu* menu, int hMenu, int hParentMenu);
+    void menuAddMenuToList(QWidget* parent, QMenu* menu, GUIMENUTYPE hMenu, int hParentMenu);
     void menuAddMenu(int hMenu, QString title);
     void menuAddMenuEntry(int hMenu, QString title);
     void menuAddSeparator(int hMenu);
@@ -109,7 +113,7 @@ signals:
     void updateSEHChain();
     void updateArgumentView();
     void symbolRefreshCurrent();
-    void loadSourceFile(const QString path, int line, int selection);
+    void loadSourceFile(const QString path, duint addr);
     void setIconMenuEntry(int hEntry, QIcon icon);
     void setIconMenu(int hMenu, QIcon icon);
     void setCheckedMenuEntry(int hEntry, bool checked);
@@ -122,7 +126,7 @@ signals:
     void addQWidgetTab(QWidget* qWidget);
     void showQWidgetTab(QWidget* qWidget);
     void closeQWidgetTab(QWidget* qWidget);
-    void executeOnGuiThread(void* cbGuiThread);
+    void executeOnGuiThread(void* cbGuiThread, void* userdata);
     void updateTimeWastedCounter();
     void setGlobalNotes(const QString text);
     void getGlobalNotes(void* text);
@@ -156,12 +160,14 @@ signals:
     void getDumpAttention();
     void openTraceFile(const QString & fileName);
     void updateTraceBrowser();
+    void symbolSelectModule(duint base);
+    void getCurrentGraph(BridgeCFGraphList* graphList);
 
 private:
     CRITICAL_SECTION csBridge;
-    HANDLE hResultEvent;
+    HANDLE resultEvents[BridgeResult::Last];
+    duint bridgeResults[BridgeResult::Last];
     DWORD dwMainThreadId = 0;
-    dsint bridgeResult = 0;
     volatile bool dbgStopped = false;
 };
 

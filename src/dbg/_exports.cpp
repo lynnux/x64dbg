@@ -35,6 +35,7 @@
 #include "TraceRecord.h"
 #include "recursiveanalysis.h"
 #include "dbghelp_safe.h"
+#include "symcache.h"
 
 static bool bOnlyCipAutoComments = false;
 static bool bNoSourceLineAutoComments = false;
@@ -90,11 +91,14 @@ extern "C" DLL_EXPORT bool _dbg_valfromstring(const char* string, duint* value)
 
 extern "C" DLL_EXPORT bool _dbg_isdebugging()
 {
-    return IsFileBeingDebugged();
+    return hDebugLoopThread && IsFileBeingDebugged();
 }
 
 extern "C" DLL_EXPORT bool _dbg_isjumpgoingtoexecute(duint addr)
 {
+    if(!hActiveThread)
+        return false;
+
     unsigned char data[16];
     if(MemRead(addr, data, sizeof(data), nullptr, true))
     {
@@ -186,17 +190,23 @@ static bool getLabel(duint addr, char* label, bool noFuncOffset)
     else //no user labels
     {
         DWORD64 displacement = 0;
-        char buffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(char)];
-        PSYMBOL_INFO pSymbol = (PSYMBOL_INFO)buffer;
-        pSymbol->SizeOfStruct = sizeof(SYMBOL_INFO);
-        pSymbol->MaxNameLen = MAX_LABEL_SIZE;
-        if(SafeSymFromAddr(fdProcessInfo->hProcess, (DWORD64)addr, &displacement, pSymbol) &&
-                (!displacement || (!noFuncOffset && pSymbol->Flags != SYMFLAG_EXPORT))) //without PDB, SYMFLAG_EXPORT is reported with garbage displacements
+        SymbolInfo symInfo;
+
+        bool res;
+        if(noFuncOffset)
+            res = SymbolFromAddressExact(addr, symInfo);
+        else
+            res = SymbolFromAddressExactOrLower(addr, symInfo);
+
+        if(res)
         {
-            pSymbol->Name[pSymbol->MaxNameLen - 1] = '\0';
-            auto name = demanglePE32ExternCFunc(pSymbol->Name);
-            if(!bUndecorateSymbolNames || !SafeUnDecorateSymbolName(name, label, MAX_LABEL_SIZE, UNDNAME_NAME_ONLY))
-                strcpy_s(label, MAX_LABEL_SIZE, name);
+            displacement = (DWORD64)symInfo.disp;
+
+            //auto name = demanglePE32ExternCFunc(symInfo.decoratedName.c_str());
+            if(bUndecorateSymbolNames && !symInfo.undecoratedName.empty())
+                strncpy_s(label, MAX_LABEL_SIZE, symInfo.undecoratedName.c_str(), _TRUNCATE);
+            else
+                strncpy_s(label, MAX_LABEL_SIZE, symInfo.decoratedName.c_str(), _TRUNCATE);
             retval = !shouldFilterSymbol(label);
             if(retval && displacement)
             {
@@ -205,22 +215,30 @@ static bool getLabel(duint addr, char* label, bool noFuncOffset)
                 strncat_s(label, MAX_LABEL_SIZE, temp, _TRUNCATE);
             }
         }
-        if(!retval) //search for CALL <jmp.&user32.MessageBoxA>
+        if(!retval)  //search for CALL <jmp.&user32.MessageBoxA>
         {
             BASIC_INSTRUCTION_INFO basicinfo;
             memset(&basicinfo, 0, sizeof(BASIC_INSTRUCTION_INFO));
-            if(disasmfast(addr, &basicinfo, true) && basicinfo.branch && !basicinfo.call && basicinfo.memory.value) //thing is a JMP
+            if(disasmfast(addr, &basicinfo, true) && basicinfo.branch && !basicinfo.call && basicinfo.memory.value)  //thing is a JMP
             {
                 duint val = 0;
                 if(MemRead(basicinfo.memory.value, &val, sizeof(val), nullptr, true))
                 {
-                    if(SafeSymFromAddr(fdProcessInfo->hProcess, (DWORD64)val, &displacement, pSymbol) &&
-                            (!displacement || (!noFuncOffset && pSymbol->Flags != SYMFLAG_EXPORT))) //without PDB, SYMFLAG_EXPORT is reported with garbage displacements
+                    bool res;
+                    if(noFuncOffset)
+                        res = SymbolFromAddressExact(val, symInfo);
+                    else
+                        res = SymbolFromAddressExactOrLower(val, symInfo);
+
+                    if(res)
                     {
-                        pSymbol->Name[pSymbol->MaxNameLen - 1] = '\0';
-                        auto name = demanglePE32ExternCFunc(pSymbol->Name);
-                        if(!bUndecorateSymbolNames || !SafeUnDecorateSymbolName(name, label, MAX_LABEL_SIZE, UNDNAME_NAME_ONLY))
-                            sprintf_s(label, MAX_LABEL_SIZE, "JMP.&%s", name);
+                        //pSymbol->Name[pSymbol->MaxNameLen - 1] = '\0';
+
+                        //auto name = demanglePE32ExternCFunc(pSymbol->Name);
+                        if(bUndecorateSymbolNames && !symInfo.undecoratedName.empty())
+                            _snprintf_s(label, MAX_LABEL_SIZE, _TRUNCATE, "JMP.&%s", symInfo.undecoratedName.c_str());
+                        else
+                            _snprintf_s(label, MAX_LABEL_SIZE, _TRUNCATE, "JMP.&%s", symInfo.decoratedName.c_str());
                         retval = !shouldFilterSymbol(label);
                         if(retval && displacement)
                         {
@@ -232,7 +250,7 @@ static bool getLabel(duint addr, char* label, bool noFuncOffset)
                 }
             }
         }
-        if(!retval) //search for module entry
+        if(!retval)  //search for module entry
         {
             if(addr != 0 && ModEntryFromAddr(addr) == addr)
             {
@@ -314,18 +332,17 @@ extern "C" DLL_EXPORT bool _dbg_addrinfoget(duint addr, SEGMENTREG segment, BRID
         {
             String comment;
             DWORD dwDisplacement;
-            IMAGEHLP_LINEW64 line;
-            line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
-            if(!bNoSourceLineAutoComments && SafeSymGetLineFromAddrW64(fdProcessInfo->hProcess, (DWORD64)addr, &dwDisplacement, &line) && !dwDisplacement)
+            char fileName[MAX_STRING_SIZE] = {};
+            int lineNumber = 0;
+            if(!bNoSourceLineAutoComments && SymGetSourceLine(addr, fileName, &lineNumber, &dwDisplacement) && !dwDisplacement)
             {
-                wchar_t filename[deflen] = L"";
-                wcsncpy_s(filename, line.FileName, _TRUNCATE);
-                auto len = wcslen(filename);
-                while(filename[len] != L'\\' && len != 0)
-                    len--;
-                if(len)
-                    len++;
-                comment = StringUtils::sprintf("%s:%u", StringUtils::Utf16ToUtf8(filename + len).c_str(), line.LineNumber);
+
+                char* actualName = fileName;
+                char* l = strrchr(fileName, '\\');
+                if(l)
+                    actualName = l + 1;
+
+                comment = StringUtils::sprintf("%s:%u", actualName, lineNumber);
                 retval = true;
             }
 
@@ -747,7 +764,7 @@ extern "C" DLL_EXPORT duint _dbg_getbranchdestination(duint addr)
     Zydis cp;
     if(!cp.Disassemble(addr, data))
         return 0;
-    if(cp.IsBranchType(Zydis::BTJmp | Zydis::BTCall | Zydis::BTLoop))
+    if(cp.IsBranchType(Zydis::BTJmp | Zydis::BTCall | Zydis::BTLoop | Zydis::BTXbegin))
     {
         auto opValue = cp.ResolveOpValue(0, [](ZydisRegister reg) -> size_t
         {
@@ -980,6 +997,7 @@ extern "C" DLL_EXPORT duint _dbg_sendmessage(DBGMSG type, void* param1, void* pa
     {
         valuesetsignedcalc(!settingboolget("Engine", "CalculationType")); //0:signed, 1:unsigned
         SetEngineVariable(UE_ENGINE_SET_DEBUG_PRIVILEGE, settingboolget("Engine", "EnableDebugPrivilege"));
+        SetEngineVariable(UE_ENGINE_SAFE_ATTACH, settingboolget("Engine", "SafeAttach"));
         bOnlyCipAutoComments = settingboolget("Disassembler", "OnlyCipAutoComments");
         bNoSourceLineAutoComments = settingboolget("Disassembler", "NoSourceLineAutoComments");
         bListAllPages = settingboolget("Engine", "ListAllPages");
@@ -992,6 +1010,7 @@ extern "C" DLL_EXPORT duint _dbg_sendmessage(DBGMSG type, void* param1, void* pa
         bVerboseExceptionLogging = settingboolget("Engine", "VerboseExceptionLogging");
         bNoWow64SingleStepWorkaround = settingboolget("Engine", "NoWow64SingleStepWorkaround");
         bQueryWorkingSet = settingboolget("Misc", "QueryWorkingSet");
+        bForceLoadSymbols = settingboolget("Misc", "ForceLoadSymbols");
         stackupdatesettings();
 
         duint setting;
@@ -1441,7 +1460,7 @@ extern "C" DLL_EXPORT duint _dbg_sendmessage(DBGMSG type, void* param1, void* pa
         auto modbase = ModBaseFromAddr(base);
         if(modbase)
             base = modbase, size = ModSizeFromAddr(modbase);
-        RecursiveAnalysis analysis(base, size, entry, 0, true);
+        RecursiveAnalysis analysis(base, size, entry, true);
         analysis.Analyse();
         auto graph = analysis.GetFunctionGraph(entry);
         if(!graph)
@@ -1454,8 +1473,15 @@ extern "C" DLL_EXPORT duint _dbg_sendmessage(DBGMSG type, void* param1, void* pa
     case DBG_MENU_PREPARE:
     {
         PLUG_CB_MENUPREPARE info;
-        info.hMenu = int(param1);
+        info.hMenu = GUIMENUTYPE(duint(param1));
         plugincbcall(CB_MENUPREPARE, &info);
+    }
+    break;
+
+    case DBG_GET_SYMBOL_INFO:
+    {
+        auto symbolptr = (const SYMBOLPTR*)param1;
+        ((const SymbolInfoGui*)symbolptr->symbol)->convertToGuiSymbol(symbolptr->modbase, (SYMBOLINFO*)param2);
     }
     break;
     }

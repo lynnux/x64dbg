@@ -36,6 +36,9 @@ void MemUpdateMap()
 
         do
         {
+            if(!DbgIsDebugging())
+                return;
+
             // Query memory attributes
             MEMORY_BASIC_INFORMATION mbi;
             memset(&mbi, 0, sizeof(mbi));
@@ -106,6 +109,9 @@ void MemUpdateMap()
     char curMod[MAX_MODULE_SIZE] = "";
     for(int i = pagecount - 1; i > -1; i--)
     {
+        if(!DbgIsDebugging())
+            return;
+
         auto & currentPage = pageVector.at(i);
         if(!currentPage.info[0] || (scmp(curMod, currentPage.info) && !bListAllPages)) //there is a module
             continue; //skip non-modules
@@ -141,13 +147,14 @@ void MemUpdateMap()
             memset(&newPage, 0, sizeof(MEMPAGE));
             VirtualQueryEx(fdProcessInfo->hProcess, (LPCVOID)base, &newPage.mbi, sizeof(MEMORY_BASIC_INFORMATION));
             strcpy_s(newPage.info, curMod);
+            newPage.mbi.RegionSize = sections.front().addr - base;
             pageVector.insert(pageVector.begin() + i, newPage);
         }
         else //list all pages
         {
             duint start = (duint)currentPage.mbi.BaseAddress;
             duint end = start + currentPage.mbi.RegionSize;
-            for(int j = 0, k = 0; j < SectionNumber; j++)
+            for(duint j = 0, k = 0; (j < (duint)SectionNumber) && (k + IMAGE_SIZEOF_SHORT_NAME < MAX_MODULE_SIZE); j++)
             {
                 const auto & currentSection = sections.at(j);
                 duint secStart = currentSection.addr;
@@ -155,13 +162,7 @@ void MemUpdateMap()
                 if(SectionSize % PAGE_SIZE) //unaligned page size
                     SectionSize += PAGE_SIZE - (SectionSize % PAGE_SIZE); //fix this
                 duint secEnd = secStart + SectionSize;
-                if(secStart >= start && secEnd <= end) //section is inside the memory page
-                {
-                    if(k)
-                        k += sprintf_s(currentPage.info + k, MAX_MODULE_SIZE - k, ",");
-                    k += sprintf_s(currentPage.info + k, MAX_MODULE_SIZE - k, " \"%s\"", currentSection.name);
-                }
-                else if(start >= secStart && end <= secEnd) //memory page is inside the section
+                if(start < secEnd && end > secStart) //the section and memory overlap
                 {
                     if(k)
                         k += sprintf_s(currentPage.info + k, MAX_MODULE_SIZE - k, ",");
@@ -174,6 +175,20 @@ void MemUpdateMap()
     // Get a list of threads for information about Kernel/PEB/TEB/Stack ranges
     THREADLIST threadList;
     ThreadGetList(&threadList);
+    auto pebBase = (duint)GetPEBLocation(fdProcessInfo->hProcess);
+    std::vector<duint> stackAddrs;
+    for(int i = 0; i < threadList.count; i++)
+    {
+        DWORD threadId = threadList.list[i].BasicInfo.ThreadId;
+
+        // Read TEB::Tib to get stack information
+        NT_TIB tib;
+        if(!ThreadGetTib(threadList.list[i].BasicInfo.ThreadLocalBase, &tib))
+            tib.StackLimit = nullptr;
+
+        // The stack will be a specific range only, not always the base address
+        stackAddrs.push_back((duint)tib.StackLimit);
+    }
 
     for(auto & page : pageVector)
     {
@@ -184,6 +199,13 @@ void MemUpdateMap()
         if(pageBase == 0x7FFE0000)
         {
             strcpy_s(page.info, "KUSER_SHARED_DATA");
+            continue;
+        }
+
+        // Mark PEB
+        if(pageBase == pebBase)
+        {
+            strcpy_s(page.info, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "PEB")));
             continue;
         }
 
@@ -212,18 +234,11 @@ void MemUpdateMap()
                     sprintf_s(page.info, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Thread %X WoW64 TEB")), threadId);
                     break;
                 }
-#endif // ndef _WIN64
+#endif //_WIN64
             }
 
-            // Mark stack
-            //
-            // Read TEB::Tib to get stack information
-            NT_TIB tib;
-            if(!ThreadGetTib(tebBase, &tib))
-                continue;
-
             // The stack will be a specific range only, not always the base address
-            duint stackAddr = (duint)tib.StackLimit;
+            duint stackAddr = stackAddrs[i];
 
             if(stackAddr >= pageBase && stackAddr < (pageBase + pageSize))
                 sprintf_s(page.info, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Thread %X Stack")), threadId);
@@ -323,7 +338,7 @@ bool MemoryReadSafePage(HANDLE hProcess, LPVOID lpBaseAddress, LPVOID lpBuffer, 
 
 bool MemRead(duint BaseAddress, void* Buffer, duint Size, duint* NumberOfBytesRead, bool cache)
 {
-    if(!MemIsCanonicalAddress(BaseAddress))
+    if(!MemIsCanonicalAddress(BaseAddress) || !DbgIsDebugging())
         return false;
 
     if(cache && !MemIsValidReadPtr(BaseAddress, true))
@@ -375,7 +390,7 @@ bool MemReadUnsafePage(HANDLE hProcess, LPVOID lpBaseAddress, LPVOID lpBuffer, S
 
 bool MemReadUnsafe(duint BaseAddress, void* Buffer, duint Size, duint* NumberOfBytesRead)
 {
-    if(!MemIsCanonicalAddress(BaseAddress) || BaseAddress < PAGE_SIZE)
+    if(!MemIsCanonicalAddress(BaseAddress) || BaseAddress < PAGE_SIZE || !DbgIsDebugging())
         return false;
 
     if(!Buffer || !Size)
@@ -820,22 +835,25 @@ void MemInitRemoteProcessCookie(ULONG cookie)
 }
 
 //Workaround for modules that have holes between sections, it keeps parts it couldn't read the same as the input
-void MemReadDumb(duint BaseAddress, void* Buffer, duint Size)
+bool MemReadDumb(duint BaseAddress, void* Buffer, duint Size)
 {
     if(!MemIsCanonicalAddress(BaseAddress) || !Buffer || !Size)
-        return;
+        return false;
 
     duint offset = 0;
     duint requestedSize = Size;
     duint sizeLeftInFirstPage = PAGE_SIZE - (BaseAddress & (PAGE_SIZE - 1));
     duint readSize = min(sizeLeftInFirstPage, requestedSize);
 
+    bool success = true;
     while(readSize)
     {
         SIZE_T bytesRead = 0;
-        MemoryReadSafePage(fdProcessInfo->hProcess, (PVOID)(BaseAddress + offset), (PBYTE)Buffer + offset, readSize, &bytesRead);
+        if(!MemoryReadSafePage(fdProcessInfo->hProcess, (PVOID)(BaseAddress + offset), (PBYTE)Buffer + offset, readSize, &bytesRead))
+            success = false;
         offset += readSize;
         requestedSize -= readSize;
         readSize = min(PAGE_SIZE, requestedSize);
     }
+    return success;
 }

@@ -1,5 +1,6 @@
 #include "Breakpoints.h"
 #include "EditBreakpointDialog.h"
+#include "StringUtil.h"
 
 Breakpoints::Breakpoints(QObject* parent) : QObject(parent)
 {
@@ -485,20 +486,20 @@ void Breakpoints::toggleBPByRemoving(BPXTYPE type, duint va)
     }
 }
 
-void Breakpoints::editBP(BPXTYPE type, const QString & addrText, QWidget* widget)
+bool Breakpoints::editBP(BPXTYPE type, const QString & addrText, QWidget* widget)
 {
     BRIDGEBP bridgebp;
     if(type != bp_dll)
     {
         duint addr = addrText.toULongLong(nullptr, 16);
         if(!DbgFunctions()->GetBridgeBp(type, addr, &bridgebp))
-            return;
+            return false;
     }
     else if(!DbgFunctions()->GetBridgeBp(type, reinterpret_cast<duint>(addrText.toUtf8().constData()), &bridgebp))
-        return;
+        return false;
     EditBreakpointDialog dialog(widget, bridgebp);
     if(dialog.exec() != QDialog::Accepted)
-        return;
+        return false;
     auto bp = dialog.getBp();
     auto exec = [](const QString & command)
     {
@@ -567,7 +568,8 @@ void Breakpoints::editBP(BPXTYPE type, const QString & addrText, QWidget* widget
         exec(QString("SetExceptionBreakpointSingleshoot %1, %2").arg(addrText).arg(bp.singleshoot));
         break;
     default:
-        return;
+        return false;
     }
     GuiUpdateBreakpointsView();
+    return true;
 }

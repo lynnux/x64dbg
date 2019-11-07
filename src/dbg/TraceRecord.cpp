@@ -1,5 +1,4 @@
 #include "TraceRecord.h"
-#include "capstone_wrapper.h"
 #include "module.h"
 #include "memory.h"
 #include "threading.h"
@@ -7,13 +6,14 @@
 #include "disasm_helper.h"
 #include "disasm_fast.h"
 #include "plugin_loader.h"
+#include "stringformat.h"
 #include "value.h"
 
 #define MAX_INSTRUCTIONS_TRACED_FULL_REG_DUMP 512
 
 TraceRecordManager TraceRecord;
 
-TraceRecordManager::TraceRecordManager() : instructionCounter(0)
+TraceRecordManager::TraceRecordManager()
 {
     ModuleNames.emplace_back("");
 }
@@ -199,10 +199,12 @@ void TraceRecordManager::TraceExecute(duint address, duint size)
     }
 }
 
+//See https://www.felixcloutier.com/x86/FXSAVE.html, max 512 bytes
+#define memoryContentSize 512
 
-static void HandleCapstoneOperand(const Capstone & cp, int opindex, DISASM_ARGTYPE* argType, duint* value, unsigned char* memoryContent, unsigned char* memorySize)
+static void HandleZydisOperand(const Zydis & cp, int opindex, DISASM_ARGTYPE* argType, duint* value, unsigned char memoryContent[memoryContentSize], unsigned char* memorySize)
 {
-    *value = cp.ResolveOpValue(opindex, [&cp](x86_reg reg)
+    *value = cp.ResolveOpValue(opindex, [&cp](ZydisRegister reg)
     {
         auto regName = cp.RegName(reg);
         return regName ? getregister(nullptr, regName) : 0; //TODO: temporary needs enums + caching
@@ -210,30 +212,30 @@ static void HandleCapstoneOperand(const Capstone & cp, int opindex, DISASM_ARGTY
     const auto & op = cp[opindex];
     switch(op.type)
     {
-    case X86_OP_REG:
+    case ZYDIS_OPERAND_TYPE_REGISTER:
         *argType = arg_normal;
         break;
 
-    case X86_OP_IMM:
+    case ZYDIS_OPERAND_TYPE_IMMEDIATE:
         *argType = arg_normal;
         break;
 
-    case X86_OP_MEM:
+    case ZYDIS_OPERAND_TYPE_POINTER:
+        *argType = arg_normal;
+        break;
+
+    case ZYDIS_OPERAND_TYPE_MEMORY:
     {
         *argType = arg_memory;
-        const x86_op_mem & mem = op.mem;
-#ifdef _WIN64
-        if(mem.segment == X86_REG_GS)
-#else //x86
-        if(mem.segment == X86_REG_FS)
-#endif
+        const auto & mem = op.mem;
+        if(mem.segment == ArchValue(ZYDIS_REGISTER_FS, ZYDIS_REGISTER_GS))
         {
             *value += ThreadGetLocalBase(ThreadGetId(hActiveThread));
         }
-        *memorySize = op.size;
-        if(DbgMemIsValidReadPtr(*value))
+        *memorySize = op.size / 8;
+        if(*memorySize <= memoryContentSize && DbgMemIsValidReadPtr(*value))
         {
-            MemRead(*value, memoryContent, max(op.size, sizeof(duint)));
+            MemRead(*value, memoryContent, max(op.size / 8, sizeof(duint)));
         }
     }
     break;
@@ -243,7 +245,7 @@ static void HandleCapstoneOperand(const Capstone & cp, int opindex, DISASM_ARGTY
     }
 }
 
-void TraceRecordManager::TraceExecuteRecord(const Capstone & newInstruction)
+void TraceRecordManager::TraceExecuteRecord(const Zydis & newInstruction)
 {
     if(!isRunTraceEnabled())
         return;
@@ -253,23 +255,27 @@ void TraceRecordManager::TraceExecuteRecord(const Capstone & newInstruction)
     REGDUMPWORD newContext;
     //DISASM_INSTR newInstruction;
     DWORD newThreadId;
-    duint newMemory[32];
-    duint newMemoryAddress[32];
-    duint oldMemory[32];
+    const size_t memoryArrayCount = 32;
+    duint newMemory[memoryArrayCount];
+    duint newMemoryAddress[memoryArrayCount];
+    duint oldMemory[memoryArrayCount];
     unsigned char newMemoryArrayCount = 0;
     DbgGetRegDumpEx(&newContext.registers, sizeof(REGDUMP));
     newThreadId = ThreadGetId(hActiveThread);
-    // Don't try to resolve memory values for lea and nop instructions
-    if(!(newInstruction.IsNop() || newInstruction.GetId() == X86_INS_LEA))
+    // Don't try to resolve memory values for invalid/lea/nop instructions
+    if(newInstruction.Success() && !newInstruction.IsNop() && newInstruction.GetId() != ZYDIS_MNEMONIC_LEA)
     {
         DISASM_ARGTYPE argType;
         duint value;
-        unsigned char memoryContent[128];
+        unsigned char memoryContent[memoryContentSize];
         unsigned char memorySize;
         for(int i = 0; i < newInstruction.OpCount(); i++)
         {
             memset(memoryContent, 0, sizeof(memoryContent));
-            HandleCapstoneOperand(newInstruction, i, &argType, &value, memoryContent, &memorySize);
+            HandleZydisOperand(newInstruction, i, &argType, &value, memoryContent, &memorySize);
+            // check for overflow of the memory buffer
+            if(newMemoryArrayCount * sizeof(duint) + memorySize > memoryArrayCount * sizeof(duint))
+                continue;
             // TODO: Implicit memory access by push and pop instructions
             // TODO: Support memory value of ??? for invalid memory access
             if(argType == arg_memory)
@@ -289,23 +295,23 @@ void TraceRecordManager::TraceExecuteRecord(const Capstone & newInstruction)
                     }
             }
         }
-        if(newInstruction.GetId() == X86_INS_PUSH || newInstruction.GetId() == X86_INS_PUSHF || newInstruction.GetId() == X86_INS_PUSHFD
-                || newInstruction.GetId() == X86_INS_PUSHFQ || newInstruction.GetId() == X86_INS_CALL //TODO: far call accesses 2 stack entries
+        if(newInstruction.GetId() == ZYDIS_MNEMONIC_PUSH || newInstruction.GetId() == ZYDIS_MNEMONIC_PUSHF || newInstruction.GetId() == ZYDIS_MNEMONIC_PUSHFD
+                || newInstruction.GetId() == ZYDIS_MNEMONIC_PUSHFQ || newInstruction.GetId() == ZYDIS_MNEMONIC_CALL //TODO: far call accesses 2 stack entries
           )
         {
             MemRead(newContext.registers.regcontext.csp - sizeof(duint), &newMemory[newMemoryArrayCount], sizeof(duint));
             newMemoryAddress[newMemoryArrayCount] = newContext.registers.regcontext.csp - sizeof(duint);
             newMemoryArrayCount++;
         }
-        else if(newInstruction.GetId() == X86_INS_POP || newInstruction.GetId() == X86_INS_POPF || newInstruction.GetId() == X86_INS_POPFD
-                || newInstruction.GetId() == X86_INS_POPFQ || newInstruction.GetId() == X86_INS_RET)
+        else if(newInstruction.GetId() == ZYDIS_MNEMONIC_POP || newInstruction.GetId() == ZYDIS_MNEMONIC_POPF || newInstruction.GetId() == ZYDIS_MNEMONIC_POPFD
+                || newInstruction.GetId() == ZYDIS_MNEMONIC_POPFQ || newInstruction.GetId() == ZYDIS_MNEMONIC_RET)
         {
             MemRead(newContext.registers.regcontext.csp, &newMemory[newMemoryArrayCount], sizeof(duint));
             newMemoryAddress[newMemoryArrayCount] = newContext.registers.regcontext.csp;
             newMemoryArrayCount++;
         }
         //TODO: PUSHAD/POPAD
-        assert(newMemoryArrayCount < 32);
+        assert(newMemoryArrayCount < memoryArrayCount);
     }
     if(rtPrevInstAvailable)
     {
@@ -410,7 +416,8 @@ void TraceRecordManager::TraceExecuteRecord(const Capstone & newInstruction)
             if(written < DWORD(WriteBufferPtr - WriteBuffer)) //Disk full?
             {
                 CloseHandle(rtFile);
-                dprintf(QT_TRANSLATE_NOOP("DBG", "Run trace has stopped unexpectedly because WriteFile() failed. GetLastError()= %X .\r\n"), GetLastError());
+                String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+                dprintf(QT_TRANSLATE_NOOP("DBG", "Run trace has stopped unexpectedly because WriteFile() failed. GetLastError() = %s.\r\n"), error.c_str());
                 rtEnabled = false;
             }
         }
@@ -541,7 +548,7 @@ bool TraceRecordManager::enableRunTrace(bool enabled, const char* fileName)
             for(size_t i = 0; i < _countof(rtOldContextChanged); i++)
                 rtOldContextChanged[i] = true;
             dprintf(QT_TRANSLATE_NOOP("DBG", "Run trace started. File: %s\r\n"), fileName);
-            Capstone cp;
+            Zydis cp;
             unsigned char instr[MAX_DISASM_BUFFER];
             auto cip = GetContextDataEx(hActiveThread, UE_CIP);
             if(MemRead(cip, instr, MAX_DISASM_BUFFER))
@@ -554,7 +561,8 @@ bool TraceRecordManager::enableRunTrace(bool enabled, const char* fileName)
         }
         else
         {
-            dprintf(QT_TRANSLATE_NOOP("DBG", "Cannot create run trace file. GetLastError()= %X .\r\n"), GetLastError());
+            String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+            dprintf(QT_TRANSLATE_NOOP("DBG", "Cannot create run trace file. GetLastError() = %s.\r\n"), error.c_str());
             return false;
         }
     }
@@ -699,7 +707,7 @@ void _dbg_dbgtraceexecute(duint CIP)
 {
     if(TraceRecord.getTraceRecordType(CIP) != TraceRecordManager::TraceRecordType::TraceRecordNone)
     {
-        Capstone instruction;
+        Zydis instruction;
         unsigned char data[MAX_DISASM_BUFFER];
         if(MemRead(CIP, data, MAX_DISASM_BUFFER))
         {
@@ -719,7 +727,7 @@ void _dbg_dbgtraceexecute(duint CIP)
     {
         if(TraceRecord.isRunTraceEnabled())
         {
-            Capstone instruction;
+            Zydis instruction;
             unsigned char data[MAX_DISASM_BUFFER];
             if(MemRead(CIP, data, MAX_DISASM_BUFFER))
             {

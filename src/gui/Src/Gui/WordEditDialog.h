@@ -1,6 +1,7 @@
 #ifndef WORDEDITDIALOG_H
 #define WORDEDITDIALOG_H
 
+#include <QValidator>
 #include <QDialog>
 #include <QPushButton>
 #include "Imports.h"
@@ -42,6 +43,7 @@ private:
     int mHexLineEditPos;
     int mSignedEditPos;
     int mUnsignedEditPos;
+    int mAsciiLineEditPos;
 };
 
 #endif // WORDEDITDIALOG_H

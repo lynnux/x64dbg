@@ -16,6 +16,7 @@ ScriptView::ScriptView(StdTable* parent) : StdTable(parent)
     enableMultiSelection(false);
     enableColumnSorting(false);
     setDrawDebugOnly(false);
+    setDisassemblyPopupEnabled(false);
 
     int charwidth = getCharWidth();
 
@@ -39,6 +40,10 @@ ScriptView::ScriptView(StdTable* parent) : StdTable(parent)
     connect(mMRUList, SIGNAL(openFile(QString)), this, SLOT(openRecentFile(QString)));
     mMRUList->load();
 
+    // command line edit dialog
+    mCmdLineEdit = new LineEditDialog(this);
+    mCmdLineEdit->setWindowTitle(tr("Execute Script Command..."));
+
     // Slots
     connect(Bridge::getBridge(), SIGNAL(scriptAdd(int, const char**)), this, SLOT(add(int, const char**)));
     connect(Bridge::getBridge(), SIGNAL(scriptClear()), this, SLOT(clear()));
@@ -59,8 +64,8 @@ void ScriptView::updateColors()
 {
     StdTable::updateColors();
 
-    selectionColor = ConfigColor("DisassemblySelectionColor");
-    backgroundColor = ConfigColor("DisassemblyBackgroundColor");
+    mSelectionColor = ConfigColor("DisassemblySelectionColor");
+    mBackgroundColor = ConfigColor("DisassemblyBackgroundColor");
 }
 
 QString ScriptView::paintContent(QPainter* painter, dsint rowBase, int rowOffset, int col, int x, int y, int w, int h)
@@ -68,7 +73,7 @@ QString ScriptView::paintContent(QPainter* painter, dsint rowBase, int rowOffset
     bool wIsSelected = isSelected(rowBase, rowOffset);
     // Highlight if selected
     if(wIsSelected)
-        painter->fillRect(QRect(x, y, w, h), QBrush(selectionColor)); //ScriptViewSelectionColor
+        painter->fillRect(QRect(x, y, w, h), QBrush(mSelectionColor)); //ScriptViewSelectionColor
     QString returnString;
     int line = rowBase + rowOffset + 1;
     SCRIPTLINETYPE linetype = DbgScriptGetLineType(line);
@@ -433,7 +438,7 @@ void ScriptView::add(int count, const char** lines)
         setCellContent(i, 1, QString(lines[i]));
     BridgeFree(lines);
     reloadData(); //repaint
-    Bridge::getBridge()->setResult(1);
+    Bridge::getBridge()->setResult(BridgeResult::ScriptAdd, 1);
 }
 
 void ScriptView::clear()
@@ -563,11 +568,9 @@ void ScriptView::abort()
 
 void ScriptView::cmdExec()
 {
-    LineEditDialog mLineEdit(this);
-    mLineEdit.setWindowTitle(tr("Execute Script Command..."));
-    if(mLineEdit.exec() != QDialog::Accepted)
+    if(mCmdLineEdit->exec() != QDialog::Accepted)
         return;
-    if(!DbgScriptCmdExec(mLineEdit.editText.toUtf8().constData()))
+    if(!DbgScriptCmdExec(mCmdLineEdit->editText.toUtf8().constData()))
         error(0, tr("Error executing command!"));
 }
 
@@ -607,7 +610,7 @@ void ScriptView::enableHighlighting(bool enable)
 
 void ScriptView::messageResult(int result)
 {
-    Bridge::getBridge()->setResult(result == QMessageBox::Yes);
+    Bridge::getBridge()->setResult(BridgeResult::ScriptMessage, result == QMessageBox::Yes);
 }
 
 void ScriptView::closeSlot()

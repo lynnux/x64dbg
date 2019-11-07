@@ -5,6 +5,8 @@
 #include <QFileDialog>
 #include <QTextStream>
 #include "MiscUtil.h"
+#include "StringUtil.h"
+#include "Configuration.h"
 
 PatchDialog::PatchDialog(QWidget* parent) :
     QDialog(parent),
@@ -191,8 +193,6 @@ void PatchDialog::groupToggle()
     QString addrText = ToPtrString(groupStart);
     QString title = "<font color='" + color + "'><b>" + QString().sprintf("%d:", group) + addrText + "</b></font>";
     mGroupSelector->setGroupTitle(title);
-    DbgCmdExecDirect(QString("disasm " + addrText).toUtf8().constData());
-    DbgCmdExecDirect(QString("dump " + addrText).toUtf8().constData());
 }
 
 void PatchDialog::groupPrevious()
@@ -672,7 +672,8 @@ void PatchDialog::saveAs1337(const QString & filename)
     QFile file(filename);
     file.open(QFile::WriteOnly | QFile::Text);
     QString text = lines.join("\n");
-    file.write(text.toUtf8().constData(), text.length());
+    QByteArray textUtf8 = text.toUtf8();
+    file.write(textUtf8.constData(), textUtf8.length());
     file.close();
 
     SimpleInfoBox(this, tr("Information"), tr("%1 patch(es) exported!").arg(patches));

@@ -34,7 +34,6 @@
 #include "DebugStatusLabel.h"
 #include "LogStatusLabel.h"
 #include "SourceViewerManager.h"
-#include "SnowmanView.h"
 #include "HandlesView.h"
 #include "MainWindowCloseThread.h"
 #include "TimeWastedCounter.h"
@@ -71,7 +70,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(Bridge::getBridge(), SIGNAL(updateWindowTitle(QString)), this, SLOT(updateWindowTitleSlot(QString)));
     connect(Bridge::getBridge(), SIGNAL(addRecentFile(QString)), this, SLOT(addRecentFile(QString)));
     connect(Bridge::getBridge(), SIGNAL(setLastException(uint)), this, SLOT(setLastException(uint)));
-    connect(Bridge::getBridge(), SIGNAL(menuAddMenuToList(QWidget*, QMenu*, int, int)), this, SLOT(addMenuToList(QWidget*, QMenu*, int, int)));
+    connect(Bridge::getBridge(), SIGNAL(menuAddMenuToList(QWidget*, QMenu*, GUIMENUTYPE, int)), this, SLOT(addMenuToList(QWidget*, QMenu*, GUIMENUTYPE, int)));
     connect(Bridge::getBridge(), SIGNAL(menuAddMenu(int, QString)), this, SLOT(addMenu(int, QString)));
     connect(Bridge::getBridge(), SIGNAL(menuAddMenuEntry(int, QString)), this, SLOT(addMenuEntry(int, QString)));
     connect(Bridge::getBridge(), SIGNAL(menuAddSeparator(int)), this, SLOT(addSeparator(int)));
@@ -82,11 +81,15 @@ MainWindow::MainWindow(QWidget* parent)
     connect(Bridge::getBridge(), SIGNAL(setIconMenuEntry(int, QIcon)), this, SLOT(setIconMenuEntry(int, QIcon)));
     connect(Bridge::getBridge(), SIGNAL(setCheckedMenuEntry(int, bool)), this, SLOT(setCheckedMenuEntry(int, bool)));
     connect(Bridge::getBridge(), SIGNAL(setHotkeyMenuEntry(int, QString, QString)), this, SLOT(setHotkeyMenuEntry(int, QString, QString)));
+    connect(Bridge::getBridge(), SIGNAL(setVisibleMenuEntry(int, bool)), this, SLOT(setVisibleMenuEntry(int, bool)));
+    connect(Bridge::getBridge(), SIGNAL(setVisibleMenu(int, bool)), this, SLOT(setVisibleMenu(int, bool)));
+    connect(Bridge::getBridge(), SIGNAL(setNameMenuEntry(int, QString)), this, SLOT(setNameMenuEntry(int, QString)));
+    connect(Bridge::getBridge(), SIGNAL(setNameMenu(int, QString)), this, SLOT(setNameMenu(int, QString)));
     connect(Bridge::getBridge(), SIGNAL(showCpu()), this, SLOT(displayCpuWidget()));
     connect(Bridge::getBridge(), SIGNAL(addQWidgetTab(QWidget*)), this, SLOT(addQWidgetTab(QWidget*)));
     connect(Bridge::getBridge(), SIGNAL(showQWidgetTab(QWidget*)), this, SLOT(showQWidgetTab(QWidget*)));
     connect(Bridge::getBridge(), SIGNAL(closeQWidgetTab(QWidget*)), this, SLOT(closeQWidgetTab(QWidget*)));
-    connect(Bridge::getBridge(), SIGNAL(executeOnGuiThread(void*)), this, SLOT(executeOnGuiThread(void*)));
+    connect(Bridge::getBridge(), SIGNAL(executeOnGuiThread(void*, void*)), this, SLOT(executeOnGuiThread(void*, void*)));
     connect(Bridge::getBridge(), SIGNAL(dbgStateChanged(DBGSTATE)), this, SLOT(dbgStateChangedSlot(DBGSTATE)));
     connect(Bridge::getBridge(), SIGNAL(addFavouriteItem(int, QString, QString)), this, SLOT(addFavouriteItem(int, QString, QString)));
     connect(Bridge::getBridge(), SIGNAL(setFavouriteItemShortcut(int, QString, QString)), this, SLOT(setFavouriteItemShortcut(int, QString, QString)));
@@ -95,10 +98,16 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Setup menu API
     initMenuApi();
-    addMenuToList(this, ui->menuPlugins, GUI_PLUGIN_MENU);
+    Bridge::getBridge()->emitMenuAddToList(this, ui->menuPlugins, GUI_PLUGIN_MENU);
 
     // Set window title
-    mWindowMainTitle = QCoreApplication::applicationName();
+    if(BridgeIsProcessElevated())
+    {
+        mWindowMainTitle = tr("%1 [Elevated]").arg(QCoreApplication::applicationName());
+        ui->actionRestartAdmin->setEnabled(false);
+    }
+    else
+        mWindowMainTitle = QCoreApplication::applicationName();
     setWindowTitle(QString(mWindowMainTitle));
 
     // Load application icon
@@ -121,6 +130,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Symbol view
     mSymbolView = new SymbolView();
+    Bridge::getBridge()->symbolView = mSymbolView;
     mSymbolView->setWindowTitle(tr("Symbols"));
     mSymbolView->setWindowIcon(DIcon("pdb.png"));
     mSymbolView->hide();
@@ -182,14 +192,6 @@ MainWindow::MainWindow(QWidget* parent)
     mThreadView->setWindowTitle(tr("Threads"));
     mThreadView->setWindowIcon(DIcon("arrow-threads.png"));
 
-    // Snowman view (decompiler)
-    mSnowmanView = CreateSnowman(this);
-    if(!mSnowmanView)
-        mSnowmanView = new QLabel("<center>Snowman is disabled...</center>", this);
-    mSnowmanView->setWindowTitle(tr("Snowman"));
-    mSnowmanView->setWindowIcon(DIcon("snowman.png"));
-    Bridge::getBridge()->snowmanView = mSnowmanView;
-
     // Notes manager
     mNotesManager = new NotesManager(this);
     mNotesManager->setWindowTitle(tr("Notes"));
@@ -211,7 +213,6 @@ MainWindow::MainWindow(QWidget* parent)
     mTraceBrowser->setWindowIcon(DIcon("trace.png"));
     connect(mTraceBrowser, SIGNAL(displayReferencesWidget()), this, SLOT(displayReferencesWidget()));
 
-    // Create the tab widget and enable detaching and hiding
     mTabWidget = new MHTabWidget(this, true, true);
 
     // Add all widgets to the list
@@ -228,7 +229,6 @@ MainWindow::MainWindow(QWidget* parent)
     mWidgetList.push_back(WidgetInfo(mSourceViewManager, "SourceTab"));
     mWidgetList.push_back(WidgetInfo(mReferenceManager, "ReferencesTab"));
     mWidgetList.push_back(WidgetInfo(mThreadView, "ThreadsTab"));
-    mWidgetList.push_back(WidgetInfo(mSnowmanView, "SnowmanTab"));
     mWidgetList.push_back(WidgetInfo(mHandlesView, "HandlesTab"));
     mWidgetList.push_back(WidgetInfo(mTraceBrowser, "TraceTab"));
 
@@ -287,6 +287,7 @@ MainWindow::MainWindow(QWidget* parent)
     makeCommandAction(ui->actionHideDebugger, "hide");
     connect(ui->actionCpu, SIGNAL(triggered()), this, SLOT(displayCpuWidget()));
     connect(ui->actionSymbolInfo, SIGNAL(triggered()), this, SLOT(displaySymbolWidget()));
+    connect(ui->actionModules, SIGNAL(triggered()), this, SLOT(displaySymbolWidget()));
     connect(ui->actionSource, SIGNAL(triggered()), this, SLOT(displaySourceViewWidget()));
     connect(mSymbolView, SIGNAL(showReferences()), this, SLOT(displayReferencesWidget()));
     connect(ui->actionReferences, SIGNAL(triggered()), this, SLOT(displayReferencesWidget()));
@@ -315,11 +316,12 @@ MainWindow::MainWindow(QWidget* parent)
     connect(ui->actionChangeCommandLine, SIGNAL(triggered()), this, SLOT(changeCommandLine()));
     connect(ui->actionManual, SIGNAL(triggered()), this, SLOT(displayManual()));
     connect(ui->actionNotes, SIGNAL(triggered()), this, SLOT(displayNotesWidget()));
-    connect(ui->actionSnowman, SIGNAL(triggered()), this, SLOT(displaySnowmanWidget()));
     connect(ui->actionHandles, SIGNAL(triggered()), this, SLOT(displayHandlesWidget()));
     connect(ui->actionGraph, SIGNAL(triggered()), this, SLOT(displayGraphWidget()));
     connect(ui->actionPreviousTab, SIGNAL(triggered()), this, SLOT(displayPreviousTab()));
     connect(ui->actionNextTab, SIGNAL(triggered()), this, SLOT(displayNextTab()));
+    connect(ui->actionPreviousView, SIGNAL(triggered()), this, SLOT(displayPreviousView()));
+    connect(ui->actionNextView, SIGNAL(triggered()), this, SLOT(displayNextView()));
     connect(ui->actionHideTab, SIGNAL(triggered()), this, SLOT(hideTab()));
     makeCommandAction(ui->actionStepIntoSource, "TraceIntoConditional src.line(cip) && !src.disp(cip)");
     makeCommandAction(ui->actionStepOverSource, "TraceOverConditional src.line(cip) && !src.disp(cip)");
@@ -336,12 +338,11 @@ MainWindow::MainWindow(QWidget* parent)
     connect(mCpuWidget->getDisasmWidget(), SIGNAL(updateWindowTitle(QString)), this, SLOT(updateWindowTitleSlot(QString)));
     connect(mCpuWidget->getDisasmWidget(), SIGNAL(displayReferencesWidget()), this, SLOT(displayReferencesWidget()));
     connect(mCpuWidget->getDisasmWidget(), SIGNAL(displaySourceManagerWidget()), this, SLOT(displaySourceViewWidget()));
-    connect(mCpuWidget->getDisasmWidget(), SIGNAL(displaySnowmanWidget()), this, SLOT(displaySnowmanWidget()));
     connect(mCpuWidget->getDisasmWidget(), SIGNAL(displayLogWidget()), this, SLOT(displayLogWidget()));
     connect(mCpuWidget->getDisasmWidget(), SIGNAL(displayGraphWidget()), this, SLOT(displayGraphWidget()));
+    connect(mCpuWidget->getDisasmWidget(), SIGNAL(displaySymbolsWidget()), this, SLOT(displaySymbolWidget()));
     connect(mCpuWidget->getDisasmWidget(), SIGNAL(showPatches()), this, SLOT(patchWindow()));
 
-    connect(mGraphView, SIGNAL(displaySnowmanWidget()), this, SLOT(displaySnowmanWidget()));
 
     connect(mCpuWidget->getDumpWidget(), SIGNAL(displayReferencesWidget()), this, SLOT(displayReferencesWidget()));
 
@@ -412,32 +413,42 @@ void MainWindow::setupStatusBar()
 
 void MainWindow::setupLanguagesMenu()
 {
-    QDir translationsDir(QString("%1/../translations/").arg(QCoreApplication::applicationDirPath()));
     QMenu* languageMenu;
     if(tr("Languages") == QString("Languages"))
         languageMenu = new QMenu(QString("Languages"));
     else
         languageMenu = new QMenu(tr("Languages") + QString(" Languages"), this);
     languageMenu->setIcon(DIcon("codepage.png"));
+
     QLocale enUS(QLocale::English, QLocale::UnitedStates);
-    QString wCurrentLocale(currentLocale);
     QAction* action_enUS = new QAction(QString("[%1] %2 - %3").arg(enUS.name()).arg(enUS.nativeLanguageName()).arg(enUS.nativeCountryName()), languageMenu);
     connect(action_enUS, SIGNAL(triggered()), this, SLOT(chooseLanguage()));
     action_enUS->setCheckable(true);
     action_enUS->setChecked(false);
     languageMenu->addAction(action_enUS);
+    connect(languageMenu, SIGNAL(aboutToShow()), this, SLOT(setupLanguagesMenu2())); //Load this menu later, since it requires directory scanning.
+    ui->menuOptions->addMenu(languageMenu);
+}
+
+void MainWindow::setupLanguagesMenu2()
+{
+    QMenu* languageMenu = dynamic_cast<QMenu*>(sender()); //The only sender is languageMenu
+    QAction* action_enUS = languageMenu->actions()[0]; //There is only one action "action_enUS" created by setupLanguagesMenu()
+    QDir translationsDir(QString("%1/../translations/").arg(QCoreApplication::applicationDirPath()));
+    QString wCurrentLocale(currentLocale);
+
     if(!translationsDir.exists())
     {
         // translations dir do not exist
         action_enUS->setChecked(true);
-        ui->menuOptions->addMenu(languageMenu);
+        disconnect(languageMenu, SIGNAL(aboutToShow()), this, 0);
         return;
     }
     if(wCurrentLocale == QString("en_US"))
         action_enUS->setChecked(true);
     QStringList filter;
     filter << "x64dbg_*.qm";
-    QFileInfoList fileList = translationsDir.entryInfoList(filter, QDir::Readable | QDir::Files, QDir::Size);
+    QFileInfoList fileList = translationsDir.entryInfoList(filter, QDir::Readable | QDir::Files, QDir::Size); //Search for all translations
     auto allLocales = QLocale::matchingLocales(QLocale::AnyLanguage, QLocale::AnyScript, QLocale::AnyCountry);
     for(auto i : fileList)
     {
@@ -455,7 +466,7 @@ void MainWindow::setupLanguagesMenu()
             }
         }
     }
-    ui->menuOptions->addMenu(languageMenu);
+    disconnect(languageMenu, SIGNAL(aboutToShow()), this, 0); //Done. Let's disconnect it to prevent it from initializing twice.
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -500,7 +511,6 @@ void MainWindow::closeEvent(QCloseEvent* event)
     if(bExecuteThread)
     {
         bExecuteThread = false;
-        CloseSnowman(mSnowmanView);
         Sleep(100);
         mCloseThread->start();
         emit Bridge::getBridge()->close();
@@ -537,6 +547,8 @@ void MainWindow::setTab(QWidget* widget)
             return;
         }
     }
+
+    //TODO: restore configuration index
 }
 
 void MainWindow::loadTabDefaultOrder()
@@ -547,6 +559,10 @@ void MainWindow::loadTabDefaultOrder()
     //TODO
     for(int i = 0; i < mWidgetList.size(); i++)
         addQWidgetTab(mWidgetList[i].widget, mWidgetList[i].nativeName);
+
+    // Add plugin tabs to the end
+    for(const auto & widget : mPluginWidgetList)
+        addQWidgetTab(widget.widget, widget.nativeName);
 }
 
 void MainWindow::loadTabSavedOrder()
@@ -580,6 +596,19 @@ void MainWindow::loadTabSavedOrder()
     // Setup tabs
     for(auto & widget : tabIndexToWidget)
         addQWidgetTab(widget.first, widget.second);
+
+    // 'Restore' deleted tabs
+    for(int i = 0; i < mWidgetList.size(); i++)
+    {
+        duint isDeleted = 0;
+        BridgeSettingGetUint("Deleted Tabs", mWidgetList[i].nativeName.toUtf8().constData(), &isDeleted);
+        if(isDeleted)
+            mTabWidget->DeleteTab(mTabWidget->indexOf(mWidgetList[i].widget));
+    }
+
+    // Add plugin tabs to the end
+    for(const auto & widget : mPluginWidgetList)
+        addQWidgetTab(widget.widget, widget.nativeName);
 }
 
 void MainWindow::clearTabWidget()
@@ -605,7 +634,9 @@ void MainWindow::saveWindowSettings()
     for(int i = 0; i < mWidgetList.size(); i++)
     {
         bool isDetached = detachedTabWindows.contains(mWidgetList[i].widget);
+        bool isDeleted = !isDetached && mTabWidget->indexOf(mWidgetList[i].widget) == -1;
         BridgeSettingSetUint("Detached Windows", mWidgetList[i].nativeName.toUtf8().constData(), isDetached);
+        BridgeSettingSetUint("Deleted Tabs", mWidgetList[i].nativeName.toUtf8().constData(), isDeleted);
         if(isDetached)
             BridgeSettingSet("Tab Window Settings", mWidgetList[i].nativeName.toUtf8().constData(),
                              mWidgetList[i].widget->parentWidget()->saveGeometry().toBase64().data());
@@ -646,6 +677,15 @@ void MainWindow::loadWindowSettings()
         }
     }
 
+    // 'Restore' deleted tabs
+    for(int i = 0; i < mWidgetList.size(); i++)
+    {
+        duint isDeleted = 0;
+        BridgeSettingGetUint("Deleted Tabs", mWidgetList[i].nativeName.toUtf8().constData(), &isDeleted);
+        if(isDeleted)
+            mTabWidget->DeleteTab(mTabWidget->indexOf(mWidgetList[i].widget));
+    }
+
     mCpuWidget->loadWindowSettings();
     mSymbolView->loadWindowSettings();
 }
@@ -674,6 +714,7 @@ void MainWindow::refreshShortcuts()
     setGlobalShortcut(ui->actionSEHChain, ConfigShortcut("ViewSEHChain"));
     setGlobalShortcut(ui->actionScript, ConfigShortcut("ViewScript"));
     setGlobalShortcut(ui->actionSymbolInfo, ConfigShortcut("ViewSymbolInfo"));
+    setGlobalShortcut(ui->actionModules, ConfigShortcut("ViewModules"));
     setGlobalShortcut(ui->actionSource, ConfigShortcut("ViewSource"));
     setGlobalShortcut(ui->actionReferences, ConfigShortcut("ViewReferences"));
     setGlobalShortcut(ui->actionThreads, ConfigShortcut("ViewThreads"));
@@ -683,11 +724,12 @@ void MainWindow::refreshShortcuts()
     setGlobalShortcut(ui->actionBookmarks, ConfigShortcut("ViewBookmarks"));
     setGlobalShortcut(ui->actionFunctions, ConfigShortcut("ViewFunctions"));
     setGlobalShortcut(ui->actionVariables, ConfigShortcut("ViewVariables"));
-    setGlobalShortcut(ui->actionSnowman, ConfigShortcut("ViewSnowman"));
     setGlobalShortcut(ui->actionHandles, ConfigShortcut("ViewHandles"));
     setGlobalShortcut(ui->actionGraph, ConfigShortcut("ViewGraph"));
     setGlobalShortcut(ui->actionPreviousTab, ConfigShortcut("ViewPreviousTab"));
     setGlobalShortcut(ui->actionNextTab, ConfigShortcut("ViewNextTab"));
+    setGlobalShortcut(ui->actionPreviousView, ConfigShortcut("ViewPreviousHistory"));
+    setGlobalShortcut(ui->actionNextView, ConfigShortcut("ViewNextHistory"));
     setGlobalShortcut(ui->actionHideTab, ConfigShortcut("ViewHideTab"));
 
     setGlobalShortcut(ui->actionRun, ConfigShortcut("DebugRun"));
@@ -902,11 +944,22 @@ void MainWindow::dropEvent(QDropEvent* pEvent)
     }
 }
 
+bool MainWindow::event(QEvent* event)
+{
+    // just make sure mTabWidget take current view as the latest
+    if(event->type() == QEvent::WindowActivate && this->isActiveWindow())
+    {
+        mTabWidget->setCurrentIndex(mTabWidget->currentIndex());
+    }
+
+    return QMainWindow::event(event);
+}
+
 void MainWindow::updateWindowTitleSlot(QString filename)
 {
     if(filename.length())
     {
-        setWindowTitle(mWindowMainTitle + QString(" - ") + filename);
+        setWindowTitle(filename + QString(" - ") + mWindowMainTitle);
         windowTitle = filename;
     }
     else
@@ -941,11 +994,6 @@ void MainWindow::displayThreadsWidget()
     showQWidgetTab(mThreadView);
 }
 
-void MainWindow::displaySnowmanWidget()
-{
-    showQWidgetTab(mSnowmanView);
-}
-
 void MainWindow::displayGraphWidget()
 {
     showQWidgetTab(mGraphView);
@@ -961,6 +1009,16 @@ void MainWindow::displayNextTab()
     mTabWidget->showNextTab();
 }
 
+void MainWindow::displayPreviousView()
+{
+    mTabWidget->showPreviousView();
+}
+
+void MainWindow::displayNextView()
+{
+    mTabWidget->showNextView();
+}
+
 void MainWindow::hideTab()
 {
     mTabWidget->deleteCurrentTab();
@@ -968,10 +1026,10 @@ void MainWindow::hideTab()
 
 void MainWindow::openSettings()
 {
-    SettingsDialog* settings = new SettingsDialog(this);
-    connect(settings, SIGNAL(chkSaveLoadTabOrderStateChanged(bool)), this, SLOT(chkSaveloadTabSavedOrderStateChangedSlot(bool)));
-    settings->lastException = lastException;
-    settings->exec();
+    SettingsDialog settings(this);
+    connect(&settings, SIGNAL(chkSaveLoadTabOrderStateChanged(bool)), this, SLOT(chkSaveloadTabSavedOrderStateChangedSlot(bool)));
+    settings.lastException = lastException;
+    settings.exec();
 }
 
 void MainWindow::openAppearance()
@@ -1041,11 +1099,11 @@ const MainWindow::MenuInfo* MainWindow::findMenu(int hMenu)
     return nFound == -1 ? 0 : &mMenuList.at(nFound);
 }
 
-void MainWindow::addMenuToList(QWidget* parent, QMenu* menu, int hMenu, int hParentMenu)
+void MainWindow::addMenuToList(QWidget* parent, QMenu* menu, GUIMENUTYPE hMenu, int hParentMenu)
 {
     if(!findMenu(hMenu))
         mMenuList.push_back(MenuInfo(parent, menu, hMenu, hParentMenu, hMenu == GUI_PLUGIN_MENU));
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(BridgeResult::MenuAddToList);
 }
 
 void MainWindow::addMenu(int hMenu, QString title)
@@ -1053,7 +1111,7 @@ void MainWindow::addMenu(int hMenu, QString title)
     const MenuInfo* menu = findMenu(hMenu);
     if(!menu && hMenu != -1)
     {
-        Bridge::getBridge()->setResult(-1);
+        Bridge::getBridge()->setResult(BridgeResult::MenuAdd, -1);
         return;
     }
     int hMenuNew = hEntryMenuPool++;
@@ -1068,7 +1126,7 @@ void MainWindow::addMenu(int hMenu, QString title)
         menu->mMenu->addMenu(wMenu);
         menu->mMenu->menuAction()->setVisible(true);
     }
-    Bridge::getBridge()->setResult(hMenuNew);
+    Bridge::getBridge()->setResult(BridgeResult::MenuAdd, hMenuNew);
 }
 
 void MainWindow::addMenuEntry(int hMenu, QString title)
@@ -1076,7 +1134,7 @@ void MainWindow::addMenuEntry(int hMenu, QString title)
     const MenuInfo* menu = findMenu(hMenu);
     if(!menu && hMenu != -1)
     {
-        Bridge::getBridge()->setResult(-1);
+        Bridge::getBridge()->setResult(BridgeResult::MenuAddEntry, -1);
         return;
     }
     MenuEntryInfo newInfo;
@@ -1085,6 +1143,7 @@ void MainWindow::addMenuEntry(int hMenu, QString title)
     newInfo.hParentMenu = hMenu;
     QWidget* parent = hMenu == -1 ? this : menu->parent;
     QAction* wAction = new QAction(title, parent);
+    parent->addAction(wAction);
     wAction->setObjectName(QString().sprintf("ENTRY|%d", hEntryNew));
     wAction->setShortcutContext((!menu || menu->globalMenu) ? Qt::ApplicationShortcut : Qt::WidgetShortcut);
     parent->addAction(wAction);
@@ -1098,7 +1157,7 @@ void MainWindow::addMenuEntry(int hMenu, QString title)
         menu->mMenu->addAction(wAction);
         menu->mMenu->menuAction()->setVisible(true);
     }
-    Bridge::getBridge()->setResult(hEntryNew);
+    Bridge::getBridge()->setResult(BridgeResult::MenuAddEntry, hEntryNew);
 }
 
 void MainWindow::addSeparator(int hMenu)
@@ -1112,7 +1171,7 @@ void MainWindow::addSeparator(int hMenu)
         newInfo.mAction = menu->mMenu->addSeparator();
         mEntryList.push_back(newInfo);
     }
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(BridgeResult::MenuAddSeparator);
 }
 
 void MainWindow::clearMenuHelper(int hMenu)
@@ -1136,7 +1195,7 @@ void MainWindow::clearMenuHelper(int hMenu)
         clearMenuHelper(hMenu);
 }
 
-void MainWindow::clearMenu(int hMenu, bool erase)
+void MainWindow::clearMenuImpl(int hMenu, bool erase)
 {
     //this recursively removes the entries from mEntryList and mMenuList
     clearMenuHelper(hMenu);
@@ -1164,7 +1223,12 @@ void MainWindow::clearMenu(int hMenu, bool erase)
             break;
         }
     }
-    Bridge::getBridge()->setResult();
+}
+
+void MainWindow::clearMenu(int hMenu, bool erase)
+{
+    clearMenuImpl(hMenu, erase);
+    Bridge::getBridge()->setResult(BridgeResult::MenuClear);
 }
 
 void MainWindow::initMenuApi()
@@ -1202,12 +1266,13 @@ void MainWindow::removeMenuEntry(int hEntryMenu)
                     parentMenu->mMenu->menuAction()->setVisible(false);
                 mEntryList.erase(mEntryList.begin() + i);
             }
-            Bridge::getBridge()->setResult();
+            Bridge::getBridge()->setResult(BridgeResult::MenuRemove);
             return;
         }
     }
     //if hEntryMenu is not in mEntryList, clear+erase it from mMenuList
-    clearMenu(hEntryMenu, true);
+    clearMenuImpl(hEntryMenu, true);
+    Bridge::getBridge()->setResult(BridgeResult::MenuRemove);
 }
 
 void MainWindow::setIconMenuEntry(int hEntry, QIcon icon)
@@ -1221,7 +1286,7 @@ void MainWindow::setIconMenuEntry(int hEntry, QIcon icon)
             break;
         }
     }
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(BridgeResult::MenuSetEntryIcon);
 }
 
 void MainWindow::setIconMenu(int hMenu, QIcon icon)
@@ -1234,7 +1299,7 @@ void MainWindow::setIconMenu(int hMenu, QIcon icon)
             menu.mMenu->setIcon(icon);
         }
     }
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(BridgeResult::MenuSetIcon);
 }
 
 void MainWindow::setCheckedMenuEntry(int hEntry, bool checked)
@@ -1249,7 +1314,7 @@ void MainWindow::setCheckedMenuEntry(int hEntry, bool checked)
             break;
         }
     }
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(BridgeResult::MenuSetEntryChecked);
 }
 
 QString MainWindow::nestedMenuDescription(const MenuInfo* menu)
@@ -1298,7 +1363,7 @@ void MainWindow::setHotkeyMenuEntry(int hEntry, QString hotkey, QString id)
             break;
         }
     }
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(BridgeResult::MenuSetEntryHotkey);
 }
 
 void MainWindow::setVisibleMenuEntry(int hEntry, bool visible)
@@ -1312,7 +1377,7 @@ void MainWindow::setVisibleMenuEntry(int hEntry, bool visible)
             break;
         }
     }
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(BridgeResult::MenuSetEntryVisible);
 }
 
 void MainWindow::setVisibleMenu(int hMenu, bool visible)
@@ -1325,7 +1390,7 @@ void MainWindow::setVisibleMenu(int hMenu, bool visible)
             menu.mMenu->setVisible(visible);
         }
     }
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(BridgeResult::MenuSetVisible);
 }
 
 void MainWindow::setNameMenuEntry(int hEntry, QString name)
@@ -1340,7 +1405,7 @@ void MainWindow::setNameMenuEntry(int hEntry, QString name)
             break;
         }
     }
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(BridgeResult::MenuSetEntryName);
 }
 
 void MainWindow::setNameMenu(int hMenu, QString name)
@@ -1353,7 +1418,7 @@ void MainWindow::setNameMenu(int hMenu, QString name)
             menu.mMenu->setTitle(name);
         }
     }
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(BridgeResult::MenuSetName);
 }
 
 void MainWindow::runSelection()
@@ -1384,7 +1449,7 @@ void MainWindow::getStrWindow(const QString title, QString* text)
     if(mLineEdit.exec() != QDialog::Accepted)
         bResult = false;
     *text = mLineEdit.editText;
-    Bridge::getBridge()->setResult(bResult);
+    Bridge::getBridge()->setResult(BridgeResult::GetlineWindow, bResult);
 }
 
 void MainWindow::patchWindow()
@@ -1586,7 +1651,9 @@ void MainWindow::addQWidgetTab(QWidget* qWidget, QString nativeName)
 
 void MainWindow::addQWidgetTab(QWidget* qWidget)
 {
-    addQWidgetTab(qWidget, qWidget->windowTitle());
+    WidgetInfo info(qWidget, qWidget->metaObject()->className());
+    addQWidgetTab(info.widget, info.nativeName);
+    mPluginWidgetList.append(info);
 }
 
 void MainWindow::showQWidgetTab(QWidget* qWidget)
@@ -1608,9 +1675,9 @@ void MainWindow::closeQWidgetTab(QWidget* qWidget)
     }
 }
 
-void MainWindow::executeOnGuiThread(void* cbGuiThread)
+void MainWindow::executeOnGuiThread(void* cbGuiThread, void* userdata)
 {
-    ((GUICALLBACK)cbGuiThread)();
+    ((GUICALLBACKEX)cbGuiThread)(userdata);
 }
 
 void MainWindow::tabMovedSlot(int from, int to)
@@ -1620,7 +1687,12 @@ void MainWindow::tabMovedSlot(int from, int to)
         // Remove space in widget name and append Tab to get config settings (CPUTab, MemoryMapTab, etc...)
         //QString tabName = mTabWidget->tabText(i).replace(" ", "") + "Tab";
         QString tabName = mTabWidget->getNativeName(i);
-        Config()->setUint("TabOrder", tabName, i);
+        auto found = std::find_if(mWidgetList.begin(), mWidgetList.end(), [&tabName](const WidgetInfo & info)
+        {
+            return info.nativeName == tabName;
+        });
+        if(found != mWidgetList.end())
+            Config()->setUint("TabOrder", tabName, i);
     }
 }
 
@@ -2008,10 +2080,10 @@ void MainWindow::on_actionImportSettings_triggered()
             }
             Config()->load();
             DbgSettingsUpdated();
-            Config()->emitColorsUpdated();
-            Config()->emitFontsUpdated();
-            Config()->emitShortcutsUpdated();
-            Config()->emitTokenizerConfigUpdated();
+            emit Config()->colorsUpdated();
+            emit Config()->fontsUpdated();
+            emit Config()->shortcutsUpdated();
+            emit Config()->tokenizerConfigUpdated();
             GuiUpdateAllViews();
         }
     }

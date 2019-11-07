@@ -3,35 +3,156 @@
 #include "value.h"
 #include "memory.h"
 #include "exception.h"
+#include "ntdll/ntdll.h"
+#include "disasm_fast.h"
 
 std::unordered_map<String, FormatFunctions::Function> FormatFunctions::mFunctions;
+
+static FORMATRESULT formatErrorMsg(HMODULE DLL, const String & errName, DWORD code, char* dest, size_t destCount)
+{
+    const NTSTATUS ErrorStatus = code;
+    PMESSAGE_RESOURCE_ENTRY Entry;
+    NTSTATUS Status = RtlFindMessage(DLL,
+                                     LDR_FORMAT_MESSAGE_FROM_SYSTEM_MESSAGE_TABLE,
+                                     MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                                     ErrorStatus,
+                                     &Entry);
+    if(!NT_SUCCESS(Status))
+    {
+        if(destCount < errName.size() + 1)
+            return FORMAT_BUFFER_TOO_SMALL;
+        else
+        {
+            memcpy(dest, errName.c_str(), errName.size() + 1);
+            return FORMAT_SUCCESS;
+        }
+    }
+
+    if((Entry->Flags & MESSAGE_RESOURCE_UNICODE) != 0)
+    {
+        String UTF8Description = StringUtils::TrimRight(StringUtils::Utf16ToUtf8((const wchar_t*)Entry->Text));
+        if(UTF8Description.size() + 3 + errName.size() > destCount)
+            return FORMAT_BUFFER_TOO_SMALL;
+        else
+        {
+            sprintf_s(dest, destCount, "%s: %s", errName.c_str(), UTF8Description.c_str());
+            return FORMAT_SUCCESS;
+        }
+    }
+    else
+    {
+        String UTF8Description = StringUtils::TrimRight(StringUtils::LocalCpToUtf8((const char*)Entry->Text));
+        if(UTF8Description.size() + 3 + errName.size() > destCount)
+            return FORMAT_BUFFER_TOO_SMALL;
+        else
+        {
+            sprintf_s(dest, destCount, "%s: %s", errName.c_str(), UTF8Description.c_str());
+            return FORMAT_SUCCESS;
+        }
+    }
+}
+
+template<class Char, size_t DefaultSize = 0>
+static FORMATRESULT memoryFormatter(char* dest, size_t destCount, int argc, char* argv[], duint addr, const std::function<String(std::vector<Char>&)> & format)
+{
+    duint size = DefaultSize;
+    if(argc > 1 && !valfromstring(argv[1], &size))
+    {
+        strcpy_s(dest, destCount, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Invalid argument...")));
+        return FORMAT_ERROR_MESSAGE;
+    }
+    if(size == 0)
+    {
+        strcpy_s(dest, destCount, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Not enough arguments...")));
+        return FORMAT_ERROR_MESSAGE;
+    }
+    if(size > 1024 * 1024 * 10) //10MB max
+    {
+        strcpy_s(dest, destCount, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Too much data (10MB max)...")));
+        return FORMAT_ERROR_MESSAGE;
+    }
+    std::vector<Char> data(size);
+    if(!MemRead(addr, data.data(), size * sizeof(Char)))
+    {
+        strcpy_s(dest, destCount, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Failed to read memory...")));
+        return FORMAT_ERROR_MESSAGE;
+    }
+    auto result = format(data);
+    if(result.size() > destCount)
+        return FORMAT_BUFFER_TOO_SMALL;
+    strcpy_s(dest, destCount, result.c_str());
+    return FORMAT_SUCCESS;
+}
+
+static FORMATRESULT formatcpy_s(char* dest, size_t destCount, const char* source)
+{
+    switch(strncpy_s(dest, destCount, source, _TRUNCATE))
+    {
+    case 0:
+        return FORMAT_SUCCESS;
+    case ERANGE:
+    case STRUNCATE:
+        return FORMAT_BUFFER_TOO_SMALL;
+    default:
+        return FORMAT_ERROR;
+    }
+}
 
 void FormatFunctions::Init()
 {
     Register("mem", [](char* dest, size_t destCount, int argc, char* argv[], duint addr, void* userdata)
     {
-        duint size;
-        if(argc < 2 || !valfromstring(argv[1], &size))
+        return memoryFormatter<unsigned char>(dest, destCount, argc, argv, addr, [](std::vector<unsigned char> & data)
         {
-            strcpy_s(dest, destCount, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Invalid argument...")));
-            return FORMAT_ERROR_MESSAGE;
-        }
-        if(size > 1024 * 1024 * 10) //10MB max
+            return StringUtils::ToHex(data.data(), data.size());
+        });
+    });
+
+    Register("ascii", [](char* dest, size_t destCount, int argc, char* argv[], duint addr, void* userdata)
+    {
+        return memoryFormatter<unsigned char, 512>(dest, destCount, argc, argv, addr, [](std::vector<unsigned char> & data)
         {
-            strcpy_s(dest, destCount, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Too much data (10MB max)...")));
-            return FORMAT_ERROR_MESSAGE;
-        }
-        std::vector<unsigned char> data(size);
-        if(!MemRead(addr, data.data(), data.size()))
+            String result;
+            result.reserve(data.size());
+            for(auto & ch : data)
+            {
+                if(isprint(ch))
+                    result.push_back(char(ch));
+                else
+                    result.push_back('?');
+            }
+            return result;
+        });
+    });
+
+    Register("ansi", [](char* dest, size_t destCount, int argc, char* argv[], duint addr, void* userdata)
+    {
+        return memoryFormatter<char, 512>(dest, destCount, argc, argv, addr, [](std::vector<char> & data)
         {
-            strcpy_s(dest, destCount, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Failed to read memory...")));
-            return FORMAT_ERROR_MESSAGE;
-        }
-        auto result = StringUtils::ToHex(data.data(), data.size());
-        if(result.size() > destCount)
-            return FORMAT_BUFFER_TOO_SMALL;
-        strcpy_s(dest, destCount, result.c_str());
-        return FORMAT_SUCCESS;
+            if(data.empty() || data.back() != '\0')
+                data.push_back('\0');
+            return StringUtils::LocalCpToUtf8(data.data());
+        });
+    });
+
+    Register("utf8", [](char* dest, size_t destCount, int argc, char* argv[], duint addr, void* userdata)
+    {
+        return memoryFormatter<char, 512>(dest, destCount, argc, argv, addr, [](std::vector<char> & data)
+        {
+            if(data.empty() || data.back() != '\0')
+                data.push_back('\0');
+            return String(data.data());
+        });
+    });
+
+    Register("utf16", [](char* dest, size_t destCount, int argc, char* argv[], duint addr, void* userdata)
+    {
+        return memoryFormatter<wchar_t, 512>(dest, destCount, argc, argv, addr, [](std::vector<wchar_t> & data)
+        {
+            if(data.empty() || data.back() != L'\0')
+                data.push_back(L'\0');
+            return StringUtils::Utf16ToUtf8(data.data());
+        });
     });
 
     Register("winerror", [](char* dest, size_t destCount, int argc, char* argv[], duint code, void* userdata)
@@ -53,28 +174,8 @@ void FormatFunctions::Init()
 #endif //_WIN64
         if(errName.size() == 0)
             errName = StringUtils::sprintf("%08X", DWORD(code));
-        DWORD success = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, DWORD(code), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), helpMessage.data(), DWORD(destCount), NULL);
-        if(success > 0)
-        {
-            String UTF8ErrorMessage = StringUtils::Utf16ToUtf8(helpMessage.data());
-            if(destCount < errName.size() + 3 + UTF8ErrorMessage.size())
-                return FORMAT_BUFFER_TOO_SMALL;
-            else
-            {
-                sprintf_s(dest, destCount, "%s: %s", errName.c_str(), UTF8ErrorMessage.c_str());
-                return FORMAT_SUCCESS;
-            }
-        }
-        else
-        {
-            if(destCount < errName.size() + 1)
-                return FORMAT_BUFFER_TOO_SMALL;
-            else
-            {
-                memcpy(dest, errName.c_str(), errName.size() + 1);
-                return FORMAT_SUCCESS;
-            }
-        }
+
+        return formatErrorMsg(GetModuleHandleW(L"kernel32.dll"), errName, DWORD(code), dest, destCount);
     });
 
     Register("ntstatus", [](char* dest, size_t destCount, int argc, char* argv[], duint code, void* userdata)
@@ -83,28 +184,47 @@ void FormatFunctions::Init()
         String errName = NtStatusCodeToName((unsigned int)code);
         if(errName.size() == 0)
             errName = StringUtils::sprintf("%08X", DWORD(code));
-        DWORD success = FormatMessageW(FORMAT_MESSAGE_FROM_HMODULE | FORMAT_MESSAGE_IGNORE_INSERTS, GetModuleHandleW(L"ntdll.dll"), DWORD(code), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), helpMessage.data(), DWORD(destCount), NULL);
-        if(success > 0)
-        {
-            String UTF8ErrorMessage = StringUtils::Utf16ToUtf8(helpMessage.data());
-            if(destCount < errName.size() + 3 + UTF8ErrorMessage.size())
-                return FORMAT_BUFFER_TOO_SMALL;
-            else
-            {
-                sprintf_s(dest, destCount, "%s: %s", errName.c_str(), UTF8ErrorMessage.c_str());
-                return FORMAT_SUCCESS;
-            }
-        }
+
+        return formatErrorMsg(GetModuleHandleW(L"ntdll.dll"), errName, DWORD(code), dest, destCount);
+    });
+
+    Register("disasm", [](char* dest, size_t destCount, int argc, char* argv[], duint addr, void* userdata)
+    {
+        const char* result = nullptr;
+        BASIC_INSTRUCTION_INFO info;
+        if(!disasmfast(addr, &info, true))
+            result = "???";
         else
+            result = info.instruction;
+        return formatcpy_s(dest, destCount, result);
+    });
+
+    Register("modname", [](char* dest, size_t destCount, int argc, char* argv[], duint addr, void* userdata)
+    {
+        char mod[MAX_MODULE_SIZE] = "";
+        if(!ModNameFromAddr(addr, mod, true))
+            return FORMAT_ERROR;
+        return formatcpy_s(dest, destCount, mod);
+    });
+
+    Register("bswap", [](char* dest, size_t destCount, int argc, char* argv[], duint addr, void* userdata)
+    {
+        duint size = sizeof(duint);
+        if(argc > 1 && !valfromstring(argv[1], &size))
         {
-            if(destCount < errName.size() + 1)
-                return FORMAT_BUFFER_TOO_SMALL;
-            else
-            {
-                memcpy(dest, errName.c_str(), errName.size() + 1);
-                return FORMAT_SUCCESS;
-            }
+            strcpy_s(dest, destCount, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Invalid argument...")));
+            return FORMAT_ERROR_MESSAGE;
         }
+        if(size > sizeof(duint) || size == 0)
+        {
+            strcpy_s(dest, destCount, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Invalid size...")));
+            return FORMAT_ERROR_MESSAGE;
+        }
+        auto data = (unsigned char*)&addr;
+        String result;
+        for(duint i = 0; i < size; i++)
+            result += StringUtils::sprintf("%02X", data[i]);
+        return formatcpy_s(dest, destCount, result.c_str());
     });
 }
 

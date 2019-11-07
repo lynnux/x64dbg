@@ -5,6 +5,8 @@
 #include "LineEditDialog.h"
 #include "GotoDialog.h"
 #include <QFileDialog>
+#include "StringUtil.h"
+#include "MiscUtil.h"
 
 struct TypeDescriptor
 {
@@ -71,13 +73,13 @@ void StructWidget::typeAddNode(void* parent, const TYPEDESCRIPTOR* type)
     QVariant var;
     var.setValue(dtype);
     item->setData(0, Qt::UserRole, var);
-    Bridge::getBridge()->setResult(dsint(item));
+    Bridge::getBridge()->setResult(BridgeResult::TypeAddNode, dsint(item));
 }
 
 void StructWidget::typeClear()
 {
     ui->treeWidget->clear();
-    Bridge::getBridge()->setResult();
+    Bridge::getBridge()->setResult(BridgeResult::TypeClear);
 }
 
 void StructWidget::typeUpdateWidget()
@@ -126,7 +128,7 @@ void StructWidget::typeUpdateWidget()
 void StructWidget::dbgStateChangedSlot(DBGSTATE state)
 {
     if(state == stopped)
-        typeClear();
+        ui->treeWidget->clear();
 }
 
 void StructWidget::setupColumns()

@@ -1,6 +1,8 @@
 #include "TraceFileReader.h"
 #include "TraceFileSearch.h"
-#include "capstone_wrapper.h"
+#include "zydis_wrapper.h"
+#include "StringUtil.h"
+#include <QCoreApplication>
 
 static bool inRange(duint value, duint start, duint end)
 {
@@ -27,7 +29,7 @@ static QString getIndexText(TraceFileReader* file, duint index)
 int TraceFileSearchConstantRange(TraceFileReader* file, duint start, duint end)
 {
     int count = 0;
-    Capstone cp;
+    Zydis cp;
     QString title;
     if(start == end)
         title = QCoreApplication::translate("TraceFileSearch", "Constant: %1").arg(ToPtrString(start));
@@ -39,20 +41,33 @@ int TraceFileSearchConstantRange(TraceFileReader* file, duint start, duint end)
     GuiReferenceAddColumn(100, QCoreApplication::translate("TraceFileSearch", "Disassembly").toUtf8().constData());
     GuiReferenceSetRowCount(0);
 
+    REGISTERCONTEXT regcontext;
     for(unsigned long long index = 0; index < file->Length(); index++)
     {
+        regcontext = file->Registers(index).regcontext;
         bool found = false;
         //Registers
-#define FINDREG(fieldName) found |= inRange(file->Registers(index).regcontext.##fieldName, start, end)
+#define FINDREG(fieldName) found |= inRange(regcontext.##fieldName, start, end)
         FINDREG(cax);
-        FINDREG(cbx);
         FINDREG(ccx);
         FINDREG(cdx);
+        FINDREG(cbx);
         FINDREG(csp);
         FINDREG(cbp);
         FINDREG(csi);
         FINDREG(cdi);
         FINDREG(cip);
+#ifdef _WIN64
+        FINDREG(r8);
+        FINDREG(r9);
+        FINDREG(r10);
+        FINDREG(r11);
+        FINDREG(r12);
+        FINDREG(r13);
+        FINDREG(r14);
+        FINDREG(r15);
+#endif //_WIN64
+#undef FINDREG
         //Memory
         duint memAddr[MAX_MEMORY_OPERANDS];
         duint memOldContent[MAX_MEMORY_OPERANDS];
@@ -91,7 +106,7 @@ int TraceFileSearchConstantRange(TraceFileReader* file, duint start, duint end)
 int TraceFileSearchMemReference(TraceFileReader* file, duint address)
 {
     int count = 0;
-    Capstone cp;
+    Zydis cp;
     GuiReferenceInitialize(QCoreApplication::translate("TraceFileSearch", "Reference").toUtf8().constData());
     GuiReferenceAddColumn(sizeof(duint) * 2, QCoreApplication::translate("TraceFileSearch", "Address").toUtf8().constData());
     GuiReferenceAddColumn(sizeof(duint) * 2, QCoreApplication::translate("TraceFileSearch", "Index").toUtf8().constData());

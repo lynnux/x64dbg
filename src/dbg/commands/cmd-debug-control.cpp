@@ -13,15 +13,19 @@
 #include "handle.h"
 #include "thread.h"
 #include "GetPeArch.h"
+#include "database.h"
+#include "exception.h"
+#include "stringformat.h"
 
 static bool skipInt3Stepping(int argc, char* argv[])
 {
-    if(!bSkipInt3Stepping || dbgisrunning())
+    if(!bSkipInt3Stepping || dbgisrunning() || getLastExceptionInfo().ExceptionRecord.ExceptionCode != EXCEPTION_BREAKPOINT)
         return false;
     duint cip = GetContextDataEx(hActiveThread, UE_CIP);
-    unsigned char ch;
-    MemRead(cip, &ch, sizeof(ch));
-    if(ch == 0xCC && getLastExceptionInfo().ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT)
+    unsigned char data[MAX_DISASM_BUFFER];
+    MemRead(cip, data, sizeof(data));
+    Zydis zydis;
+    if(zydis.Disassemble(cip, data) && zydis.IsInt3())
     {
         //Don't allow skipping of multiple consecutive INT3 instructions
         getLastExceptionInfo().ExceptionRecord.ExceptionCode = 0;
@@ -39,7 +43,6 @@ bool cbDebugRunInternal(int argc, char* argv[])
     // Don't "run" twice if the program is already running
     if(dbgisrunning())
         return false;
-    dbgsetispausedbyuser(false);
     GuiSetDebugStateAsync(running);
     unlock(WAITID_RUN);
     PLUG_CB_RESUMEDEBUG callbackInfo;
@@ -50,11 +53,14 @@ bool cbDebugRunInternal(int argc, char* argv[])
 
 bool cbDebugInit(int argc, char* argv[])
 {
-    cbDebugStop(argc, argv);
-
-    static char arg1[deflen] = "";
     if(IsArgumentsLessThan(argc, 2))
         return false;
+
+    EXCLUSIVE_ACQUIRE(LockDebugStartStop);
+    cbDebugStop(argc, argv);
+    ASSERT_TRUE(hDebugLoopThread == nullptr);
+
+    static char arg1[deflen] = "";
     strcpy_s(arg1, argv[1]);
     wchar_t szResolvedPath[MAX_PATH] = L"";
     if(ResolveShortcut(GuiGetWindowHandle(), StringUtils::Utf8ToUtf16(arg1).c_str(), szResolvedPath, _countof(szResolvedPath)))
@@ -132,12 +138,21 @@ bool cbDebugInit(int argc, char* argv[])
     init.commandline = commandline;
     if(*currentfolder)
         init.currentfolder = currentfolder;
-    CloseHandle(CreateThread(0, 0, threadDebugLoop, &init, 0, 0));
+
+    hDebugLoopThread = CreateThread(nullptr, 0, threadDebugLoop, &init, CREATE_SUSPENDED, nullptr);
+    ResumeThread(hDebugLoopThread);
     return true;
 }
 
 bool cbDebugStop(int argc, char* argv[])
 {
+    EXCLUSIVE_ACQUIRE(LockDebugStartStop);
+    if(!hDebugLoopThread)
+        return false;
+
+    auto hDebugLoopThreadCopy = hDebugLoopThread;
+    hDebugLoopThread = nullptr;
+
     // HACK: TODO: Don't kill script on debugger ending a process
     //scriptreset(); //reset the currently-loaded script
     _dbg_animatestop();
@@ -145,20 +160,48 @@ bool cbDebugStop(int argc, char* argv[])
     //history
     HistoryClear();
     DWORD BeginTick = GetTickCount();
-    while(waitislocked(WAITID_STOP)) //custom waiting
+    bool shownWarning = false;
+
+    while(true)
     {
-        unlock(WAITID_RUN);
-        Sleep(100);
-        DWORD CurrentTick = GetTickCount();
-        if(CurrentTick - BeginTick > 10000)
+        switch(WaitForSingleObject(hDebugLoopThreadCopy, 100))
         {
-            dputs(QT_TRANSLATE_NOOP("DBG", "The debuggee does not stop after 10 seconds. The debugger state may be corrupted."));
+        case WAIT_OBJECT_0:
+            CloseHandle(hDebugLoopThreadCopy);
+            return true;
+
+        case WAIT_TIMEOUT:
+        {
+            unlock(WAITID_RUN);
+            DWORD CurrentTick = GetTickCount();
+            DWORD TimeElapsed = CurrentTick - BeginTick;
+            if(TimeElapsed >= 10000)
+            {
+                if(!shownWarning)
+                {
+                    shownWarning = true;
+                    dputs(QT_TRANSLATE_NOOP("DBG", "Finalizing the debugger thread took more than 10 seconds. This can happen if you are loading large symbol files or saving a large database."));
+                }
+                if(IsFileBeingDebugged() || TimeElapsed >= 100000)
+                {
+                    dputs(QT_TRANSLATE_NOOP("DBG", "The debuggee did not stop after 10 seconds of requesting termination. The debugger state may be corrupted. It is recommended to restart x64dbg."));
+                    DbSave(DbLoadSaveType::All);
+                    TerminateThread(hDebugLoopThreadCopy, 1); // TODO: this will lose state and cause possible corruption if a critical section is still owned
+                    CloseHandle(hDebugLoopThreadCopy);
+                    return false;
+                }
+            }
+            if(TimeElapsed >= 300)
+                TerminateProcess(fdProcessInfo->hProcess, -1);
+        }
+        break;
+
+        case WAIT_FAILED:
+            String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+            dprintf_untranslated("WAIT_FAILED, GetLastError() = %s\n", error.c_str());
             return false;
         }
-        if(CurrentTick - BeginTick >= 300)
-            TerminateProcess(fdProcessInfo->hProcess, -1);
     }
-    return true;
 }
 
 bool cbDebugAttach(int argc, char* argv[])
@@ -168,8 +211,11 @@ bool cbDebugAttach(int argc, char* argv[])
     duint pid = 0;
     if(!valfromstring(argv[1], &pid, false))
         return false;
-    if(DbgIsDebugging())
-        DbgCmdExecDirect("stop");
+
+    EXCLUSIVE_ACQUIRE(LockDebugStartStop);
+    cbDebugStop(argc, argv);
+    ASSERT_TRUE(hDebugLoopThread == nullptr);
+
     Handle hProcess = TitanOpenProcess(PROCESS_ALL_ACCESS, false, (DWORD)pid);
     if(!hProcess)
     {
@@ -212,7 +258,8 @@ bool cbDebugAttach(int argc, char* argv[])
         if(tid)
             dbgsetresumetid(tid);
     }
-    CloseHandle(CreateThread(0, 0, threadAttachLoop, (void*)pid, 0, 0));
+    hDebugLoopThread = CreateThread(nullptr, 0, threadAttachLoop, (void*)pid, CREATE_SUSPENDED, nullptr);
+    ResumeThread(hDebugLoopThread);
     return true;
 }
 
@@ -353,7 +400,7 @@ bool cbDebugStepOver(int argc, char* argv[])
         return true;
     if(skipInt3Stepping(1, argv) && !--steprepeat)
         return true;
-    StepOver((void*)cbStep);
+    StepOverWrapper((void*)cbStep);
     // History
     HistoryClear();
     dbgsetsteprepeat(false, steprepeat);
@@ -381,7 +428,7 @@ bool cbDebugStepOut(int argc, char* argv[])
         return true;
     HistoryClear();
     mRtrPreviousCSP = GetContextDataEx(hActiveThread, UE_CSP);
-    StepOver((void*)cbRtrStep);
+    StepOverWrapper((void*)cbRtrStep);
     dbgsetsteprepeat(false, steprepeat);
     return cbDebugRunInternal(1, argv);
 }

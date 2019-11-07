@@ -94,7 +94,7 @@ bool cbInstrAnalrecur(int argc, char* argv[])
     auto base = MemFindBaseAddr(entry, &size);
     if(!base)
         return false;
-    RecursiveAnalysis analysis(base, size, entry, 0, true);
+    RecursiveAnalysis analysis(base, size, entry, true);
     analysis.Analyse();
     analysis.SetMarkers();
     return true;
@@ -176,50 +176,78 @@ bool cbDebugDownloadSymbol(int argc, char* argv[])
         dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid module \"%s\"!\n"), argv[1]);
         return false;
     }
-    wchar_t wszModulePath[MAX_PATH] = L"";
-    if(!GetModuleFileNameExW(fdProcessInfo->hProcess, (HMODULE)modbase, wszModulePath, MAX_PATH))
-    {
-        dputs(QT_TRANSLATE_NOOP("DBG", "GetModuleFileNameExW failed!"));
-        return false;
-    }
-    wchar_t szOldSearchPath[MAX_PATH] = L"";
-    if(!SafeSymGetSearchPathW(fdProcessInfo->hProcess, szOldSearchPath, MAX_PATH)) //backup current search path
-    {
-        dputs(QT_TRANSLATE_NOOP("DBG", "SymGetSearchPath failed!"));
-        return false;
-    }
-    char szServerSearchPath[MAX_PATH * 2] = "";
     if(argc > 2)
         szSymbolStore = argv[2];
-    sprintf_s(szServerSearchPath, "SRV*%s*%s", szSymbolCachePath, szSymbolStore);
-    if(!SafeSymSetSearchPathW(fdProcessInfo->hProcess, StringUtils::Utf8ToUtf16(szServerSearchPath).c_str())) //set new search path
+    if(!SymDownloadSymbol(modbase, szSymbolStore))
     {
-        dputs(QT_TRANSLATE_NOOP("DBG", "SymSetSearchPath (1) failed!"));
-        return false;
-    }
-    if(!SafeSymUnloadModule64(fdProcessInfo->hProcess, (DWORD64)modbase)) //unload module
-    {
-        SafeSymSetSearchPathW(fdProcessInfo->hProcess, szOldSearchPath);
-        dputs(QT_TRANSLATE_NOOP("DBG", "SymUnloadModule64 failed!"));
-        return false;
-    }
-    auto symOptions = SafeSymGetOptions();
-    SafeSymSetOptions(symOptions & ~SYMOPT_IGNORE_CVREC);
-    if(!SymLoadModuleExW(fdProcessInfo->hProcess, 0, wszModulePath, 0, (DWORD64)modbase, 0, 0, 0)) //load module
-    {
-        dputs(QT_TRANSLATE_NOOP("DBG", "SymLoadModuleEx failed!"));
-        SafeSymSetOptions(symOptions);
-        SafeSymSetSearchPathW(fdProcessInfo->hProcess, szOldSearchPath);
-        return false;
-    }
-    SafeSymSetOptions(symOptions);
-    if(!SafeSymSetSearchPathW(fdProcessInfo->hProcess, szOldSearchPath))
-    {
-        dputs(QT_TRANSLATE_NOOP("DBG", "SymSetSearchPathW (2) failed!"));
+        dputs(QT_TRANSLATE_NOOP("DBG", "Symbol download failed... See symbol log for more information"));
         return false;
     }
     GuiSymbolRefreshCurrent();
     dputs(QT_TRANSLATE_NOOP("DBG", "Done! See symbol log for more information"));
+    return true;
+}
+
+bool cbDebugLoadSymbol(int argc, char* argv[])
+{
+    if(IsArgumentsLessThan(argc, 3))
+        return false;
+    //get some module information
+    duint modbase = ModBaseFromName(argv[1]);
+    if(!modbase)
+    {
+        dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid module \"%s\"!\n"), argv[1]);
+        return false;
+    }
+    auto pdbFile = argv[2];
+    if(!FileExists(pdbFile))
+    {
+        dputs(QT_TRANSLATE_NOOP("DBG", "File does not exist!"));
+        return false;
+    }
+    bool forceLoad = argc > 3 && DbgEval(argv[3]);
+    EXCLUSIVE_ACQUIRE(LockModules);
+    auto info = ModInfoFromAddr(modbase);
+    if(!info)
+    {
+        // TODO: this really isn't supposed to happen, but could if the module is suddenly unloaded
+        dputs("module not found...");
+        return false;
+    }
+
+    // trigger a symbol load
+    if(!info->loadSymbols(pdbFile, forceLoad))
+    {
+        dputs(QT_TRANSLATE_NOOP("DBG", "Symbol load failed... See symbol log for more information"));
+        return false;
+    }
+    GuiSymbolRefreshCurrent();
+    dputs(QT_TRANSLATE_NOOP("DBG", "Done! See symbol log for more information"));
+    return true;
+}
+
+bool cbDebugUnloadSymbol(int argc, char* argv[])
+{
+    if(IsArgumentsLessThan(argc, 2))
+        return false;
+    //get some module information
+    duint modbase = ModBaseFromName(argv[1]);
+    if(!modbase)
+    {
+        dprintf(QT_TRANSLATE_NOOP("DBG", "Invalid module \"%s\"!\n"), argv[1]);
+        return false;
+    }
+    EXCLUSIVE_ACQUIRE(LockModules);
+    auto info = ModInfoFromAddr(modbase);
+    if(!info)
+    {
+        // TODO: this really isn't supposed to happen, but could if the module is suddenly unloaded
+        dputs("module not found...");
+        return false;
+    }
+    info->unloadSymbols();
+    GuiRepaintTableView();
+    dputs(QT_TRANSLATE_NOOP("DBG", "Done!"));
     return true;
 }
 
@@ -399,6 +427,7 @@ bool cbInstrExhandlers(int argc, char* argv[])
 
 bool cbInstrExinfo(int argc, char* argv[])
 {
+    const unsigned int MASK_FACILITY_VISUALCPP = 0x006D0000;
     auto info = getLastExceptionInfo();
     const auto & record = info.ExceptionRecord;
     dputs_untranslated("EXCEPTION_DEBUG_INFO:");
@@ -408,6 +437,14 @@ bool cbInstrExinfo(int argc, char* argv[])
         exceptionName = ErrorCodeToName(record.ExceptionCode);
     if(exceptionName.size())
         dprintf_untranslated("           ExceptionCode: %08X (%s)\n", record.ExceptionCode, exceptionName.c_str());
+    else if((record.ExceptionCode & MASK_FACILITY_VISUALCPP) == MASK_FACILITY_VISUALCPP)  //delayhlp.cpp
+    {
+        auto possibleError = record.ExceptionCode & 0xFFFF;
+        exceptionName = ErrorCodeToName(possibleError);
+        if(!exceptionName.empty())
+            exceptionName = StringUtils::sprintf(" (Visual C++ %s)", exceptionName.c_str());
+        dprintf_untranslated("           ExceptionCode: %08X%s\n", record.ExceptionCode, exceptionName.c_str());
+    }
     else
         dprintf_untranslated("           ExceptionCode: %08X\n", record.ExceptionCode);
     dprintf_untranslated("          ExceptionFlags: %08X\n", record.ExceptionFlags);

@@ -4,6 +4,7 @@
 #include "Configuration.h"
 #include "Bridge.h"
 #include "ExceptionRangeDialog.h"
+#include "MiscUtil.h"
 
 SettingsDialog::SettingsDialog(QWidget* parent) :
     QDialog(parent),
@@ -16,6 +17,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) :
     adjustSize();
     bTokenizerConfigUpdated = false;
     bDisableAutoCompleteUpdated = false;
+    bAsciiAddressDumpModeUpdated = false;
     LoadSettings(); //load settings from file
     connect(Bridge::getBridge(), SIGNAL(setLastException(uint)), this, SLOT(setLastException(uint)));
     lastException = 0;
@@ -47,6 +49,9 @@ Qt::CheckState SettingsDialog::bool2check(bool checked)
 
 void SettingsDialog::LoadSettings()
 {
+    //Flush pending config changes
+    Config()->save();
+
     //Defaults
     memset(&settings, 0, sizeof(SettingsStruct));
     settings.eventSystemBreakpoint = true;
@@ -56,7 +61,7 @@ void SettingsDialog::LoadSettings()
     settings.engineCalcType = calc_unsigned;
     settings.engineBreakpointType = break_int3short;
     settings.engineUndecorateSymbolNames = true;
-    settings.engineEnableSourceDebugging = true;
+    settings.engineEnableSourceDebugging = false;
     settings.engineEnableTraceRecordDuringTrace = true;
     settings.engineNoScriptTimeout = false;
     settings.engineIgnoreInconsistentBreakpoints = false;
@@ -66,6 +71,8 @@ void SettingsDialog::LoadSettings()
     settings.engineVerboseExceptionLogging = true;
     settings.exceptionRanges = &realExceptionRanges;
     settings.disasmArgumentSpaces = false;
+    settings.disasmHidePointerSizes = false;
+    settings.disasmHideNormalSegments = false;
     settings.disasmMemorySpaces = false;
     settings.disasmUppercase = false;
     settings.disasmOnlyCipAutoComments = false;
@@ -75,7 +82,9 @@ void SettingsDialog::LoadSettings()
     settings.disasmNoSourceLineAutoComments = false;
     settings.disasmMaxModuleSize = -1;
     settings.guiNoForegroundWindow = true;
+    settings.guiLoadSaveTabOrder = true;
     settings.guiDisableAutoComplete = false;
+    settings.guiAsciiAddressDumpMode = false;
 
     //Events tab
     GetSettingBool("Events", "SystemBreakpoint", &settings.eventSystemBreakpoint);
@@ -194,6 +203,8 @@ void SettingsDialog::LoadSettings()
 
     //Disasm tab
     GetSettingBool("Disassembler", "ArgumentSpaces", &settings.disasmArgumentSpaces);
+    GetSettingBool("Disassembler", "HidePointerSizes", &settings.disasmHidePointerSizes);
+    GetSettingBool("Disassembler", "HideNormalSegments", &settings.disasmHideNormalSegments);
     GetSettingBool("Disassembler", "MemorySpaces", &settings.disasmMemorySpaces);
     GetSettingBool("Disassembler", "Uppercase", &settings.disasmUppercase);
     GetSettingBool("Disassembler", "OnlyCipAutoComments", &settings.disasmOnlyCipAutoComments);
@@ -206,6 +217,8 @@ void SettingsDialog::LoadSettings()
     if(BridgeSettingGetUint("Disassembler", "MaxModuleSize", &cur))
         settings.disasmMaxModuleSize = int(cur);
     ui->chkArgumentSpaces->setChecked(settings.disasmArgumentSpaces);
+    ui->chkHidePointerSizes->setChecked(settings.disasmHidePointerSizes);
+    ui->chkHideNormalSegments->setChecked(settings.disasmHideNormalSegments);
     ui->chkMemorySpaces->setChecked(settings.disasmMemorySpaces);
     ui->chkUppercase->setChecked(settings.disasmUppercase);
     ui->chkOnlyCipAutoComments->setChecked(settings.disasmOnlyCipAutoComments);
@@ -226,8 +239,10 @@ void SettingsDialog::LoadSettings()
     GetSettingBool("Gui", "NoForegroundWindow", &settings.guiNoForegroundWindow);
     GetSettingBool("Gui", "LoadSaveTabOrder", &settings.guiLoadSaveTabOrder);
     GetSettingBool("Gui", "ShowGraphRva", &settings.guiShowGraphRva);
+    GetSettingBool("Gui", "GraphZoomMode", &settings.guiGraphZoomMode);
     GetSettingBool("Gui", "ShowExitConfirmation", &settings.guiShowExitConfirmation);
     GetSettingBool("Gui", "DisableAutoComplete", &settings.guiDisableAutoComplete);
+    GetSettingBool("Gui", "AsciiAddressDumpMode", &settings.guiAsciiAddressDumpMode);
     ui->chkFpuRegistersLittleEndian->setChecked(settings.guiFpuRegistersLittleEndian);
     ui->chkSaveColumnOrder->setChecked(settings.guiSaveColumnOrder);
     ui->chkNoCloseDialog->setChecked(settings.guiNoCloseDialog);
@@ -236,8 +251,10 @@ void SettingsDialog::LoadSettings()
     ui->chkNoForegroundWindow->setChecked(settings.guiNoForegroundWindow);
     ui->chkSaveLoadTabOrder->setChecked(settings.guiLoadSaveTabOrder);
     ui->chkShowGraphRva->setChecked(settings.guiShowGraphRva);
+    ui->chkGraphZoomMode->setChecked(settings.guiGraphZoomMode);
     ui->chkShowExitConfirmation->setChecked(settings.guiShowExitConfirmation);
     ui->chkDisableAutoComplete->setChecked(settings.guiDisableAutoComplete);
+    ui->chkAsciiAddressDumpMode->setChecked(settings.guiAsciiAddressDumpMode);
 
     //Misc tab
     if(DbgFunctions()->GetJit)
@@ -273,7 +290,7 @@ void SettingsDialog::LoadSettings()
 
         ui->chkConfirmBeforeAtt->setCheckState(bool2check(settings.miscSetJITAuto));
 
-        if(!DbgFunctions()->IsProcessElevated())
+        if(!BridgeIsProcessElevated())
         {
             ui->chkSetJIT->setDisabled(true);
             ui->chkConfirmBeforeAtt->setDisabled(true);
@@ -303,10 +320,12 @@ void SettingsDialog::LoadSettings()
     GetSettingBool("Misc", "UseLocalHelpFile", &settings.miscUseLocalHelpFile);
     GetSettingBool("Misc", "QueryProcessCookie", &settings.miscQueryProcessCookie);
     GetSettingBool("Misc", "QueryWorkingSet", &settings.miscQueryWorkingSet);
+    GetSettingBool("Misc", "TransparentExceptionStepping", &settings.miscTransparentExceptionStepping);
     ui->chkUtf16LogRedirect->setChecked(settings.miscUtf16LogRedirect);
     ui->chkUseLocalHelpFile->setChecked(settings.miscUseLocalHelpFile);
     ui->chkQueryProcessCookie->setChecked(settings.miscQueryProcessCookie);
     ui->chkQueryWorkingSet->setChecked(settings.miscQueryWorkingSet);
+    ui->chkTransparentExceptionStepping->setChecked(settings.miscTransparentExceptionStepping);
 }
 
 void SettingsDialog::SaveSettings()
@@ -353,6 +372,8 @@ void SettingsDialog::SaveSettings()
 
     //Disasm tab
     BridgeSettingSetUint("Disassembler", "ArgumentSpaces", settings.disasmArgumentSpaces);
+    BridgeSettingSetUint("Disassembler", "HidePointerSizes", settings.disasmHidePointerSizes);
+    BridgeSettingSetUint("Disassembler", "HideNormalSegments", settings.disasmHideNormalSegments);
     BridgeSettingSetUint("Disassembler", "MemorySpaces", settings.disasmMemorySpaces);
     BridgeSettingSetUint("Disassembler", "Uppercase", settings.disasmUppercase);
     BridgeSettingSetUint("Disassembler", "OnlyCipAutoComments", settings.disasmOnlyCipAutoComments);
@@ -373,8 +394,10 @@ void SettingsDialog::SaveSettings()
     BridgeSettingSetUint("Gui", "NoForegroundWindow", settings.guiNoForegroundWindow);
     BridgeSettingSetUint("Gui", "LoadSaveTabOrder", settings.guiLoadSaveTabOrder);
     BridgeSettingSetUint("Gui", "ShowGraphRva", settings.guiShowGraphRva);
+    BridgeSettingSetUint("Gui", "GraphZoomMode", settings.guiGraphZoomMode);
     BridgeSettingSetUint("Gui", "ShowExitConfirmation", settings.guiShowExitConfirmation);
     BridgeSettingSetUint("Gui", "DisableAutoComplete", settings.guiDisableAutoComplete);
+    BridgeSettingSetUint("Gui", "AsciiAddressDumpMode", settings.guiAsciiAddressDumpMode);
 
     //Misc tab
     if(DbgFunctions()->GetJit)
@@ -404,18 +427,24 @@ void SettingsDialog::SaveSettings()
     BridgeSettingSetUint("Misc", "UseLocalHelpFile", settings.miscUseLocalHelpFile);
     BridgeSettingSetUint("Misc", "QueryProcessCookie", settings.miscQueryProcessCookie);
     BridgeSettingSetUint("Misc", "QueryWorkingSet", settings.miscQueryWorkingSet);
+    BridgeSettingSetUint("Misc", "TransparentExceptionStepping", settings.miscTransparentExceptionStepping);
 
     BridgeSettingFlush();
     Config()->load();
     if(bTokenizerConfigUpdated)
     {
-        Config()->emitTokenizerConfigUpdated();
+        emit Config()->tokenizerConfigUpdated();
         bTokenizerConfigUpdated = false;
     }
     if(bDisableAutoCompleteUpdated)
     {
-        Config()->emitDisableAutoCompleteUpdated();
+        emit Config()->disableAutoCompleteUpdated();
         bDisableAutoCompleteUpdated = false;
+    }
+    if(bAsciiAddressDumpModeUpdated)
+    {
+        emit Config()->asciiAddressDumpModeUpdated();
+        bAsciiAddressDumpModeUpdated = false;
     }
     DbgSettingsUpdated();
     GuiUpdateAllViews();
@@ -695,6 +724,18 @@ void SettingsDialog::on_chkArgumentSpaces_stateChanged(int arg1)
     settings.disasmArgumentSpaces = arg1 != Qt::Unchecked;
 }
 
+void SettingsDialog::on_chkHidePointerSizes_stateChanged(int arg1)
+{
+    bTokenizerConfigUpdated = true;
+    settings.disasmHidePointerSizes = arg1 != Qt::Unchecked;
+}
+
+void SettingsDialog::on_chkHideNormalSegments_stateChanged(int arg1)
+{
+    bTokenizerConfigUpdated = true;
+    settings.disasmHideNormalSegments = arg1 != Qt::Unchecked;
+}
+
 void SettingsDialog::on_chkMemorySpaces_stateChanged(int arg1)
 {
     bTokenizerConfigUpdated = true;
@@ -836,6 +877,12 @@ void SettingsDialog::on_chkShowGraphRva_toggled(bool checked)
     settings.guiShowGraphRva = checked;
 }
 
+void SettingsDialog::on_chkGraphZoomMode_toggled(bool checked)
+{
+    bTokenizerConfigUpdated = true;
+    settings.guiGraphZoomMode = checked;
+}
+
 void SettingsDialog::on_chkShowExitConfirmation_toggled(bool checked)
 {
     settings.guiShowExitConfirmation = checked;
@@ -845,6 +892,12 @@ void SettingsDialog::on_chkDisableAutoComplete_toggled(bool checked)
 {
     settings.guiDisableAutoComplete = checked;
     bDisableAutoCompleteUpdated = true;
+}
+
+void SettingsDialog::on_chkAsciiAddressDumpMode_toggled(bool checked)
+{
+    settings.guiAsciiAddressDumpMode = checked;
+    bAsciiAddressDumpModeUpdated = true;
 }
 
 void SettingsDialog::on_chkUseLocalHelpFile_toggled(bool checked)
@@ -860,4 +913,9 @@ void SettingsDialog::on_chkQueryProcessCookie_toggled(bool checked)
 void SettingsDialog::on_chkQueryWorkingSet_toggled(bool checked)
 {
     settings.miscQueryWorkingSet = checked;
+}
+
+void SettingsDialog::on_chkTransparentExceptionStepping_toggled(bool checked)
+{
+    settings.miscTransparentExceptionStepping = checked;
 }

@@ -63,6 +63,8 @@ private slots:
     void on_btnAddLast_clicked();
     //Disasm tab
     void on_chkArgumentSpaces_stateChanged(int arg1);
+    void on_chkHidePointerSizes_stateChanged(int arg1);
+    void on_chkHideNormalSegments_stateChanged(int arg1);
     void on_chkMemorySpaces_stateChanged(int arg1);
     void on_chkUppercase_stateChanged(int arg1);
     void on_chkOnlyCipAutoComments_stateChanged(int arg1);
@@ -83,6 +85,7 @@ private slots:
     void on_chkNoForegroundWindow_toggled(bool checked);
     void on_chkShowExitConfirmation_toggled(bool checked);
     void on_chkDisableAutoComplete_toggled(bool checked);
+    void on_chkAsciiAddressDumpMode_toggled(bool checked);
     //Misc tab
     void on_chkSetJIT_stateChanged(int arg1);
     void on_chkConfirmBeforeAtt_stateChanged(int arg1);
@@ -90,9 +93,11 @@ private slots:
     void on_editSymbolCache_textEdited(const QString & arg1);
     void on_chkUtf16LogRedirect_toggled(bool checked);
     void on_chkShowGraphRva_toggled(bool checked);
+    void on_chkGraphZoomMode_toggled(bool checked);
     void on_chkUseLocalHelpFile_toggled(bool checked);
     void on_chkQueryProcessCookie_toggled(bool checked);
     void on_chkQueryWorkingSet_toggled(bool checked);
+    void on_chkTransparentExceptionStepping_toggled(bool checked);
 
 private:
     //enums
@@ -159,6 +164,8 @@ private:
         //Disasm Tab
         bool disasmArgumentSpaces;
         bool disasmMemorySpaces;
+        bool disasmHidePointerSizes;
+        bool disasmHideNormalSegments;
         bool disasmUppercase;
         bool disasmOnlyCipAutoComments;
         bool disasmTabBetweenMnemonicAndArguments;
@@ -177,8 +184,10 @@ private:
         bool guiNoForegroundWindow;
         bool guiLoadSaveTabOrder;
         bool guiShowGraphRva;
+        bool guiGraphZoomMode;
         bool guiShowExitConfirmation;
         bool guiDisableAutoComplete;
+        bool guiAsciiAddressDumpMode;
         //Misc Tab
         bool miscSetJIT;
         bool miscSetJITAuto;
@@ -188,6 +197,7 @@ private:
         bool miscUseLocalHelpFile;
         bool miscQueryProcessCookie;
         bool miscQueryWorkingSet;
+        bool miscTransparentExceptionStepping;
     };
 
     //variables
@@ -198,6 +208,7 @@ private:
     bool bJitAutoOld;
     bool bTokenizerConfigUpdated;
     bool bDisableAutoCompleteUpdated;
+    bool bAsciiAddressDumpModeUpdated;
 
     //functions
     void GetSettingBool(const char* section, const char* name, bool* set);
