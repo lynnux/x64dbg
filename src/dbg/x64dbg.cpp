@@ -324,6 +324,8 @@ static void registercommands()
 
     dbgcmdnew("virtualmod", cbInstrVirtualmod, true); //virtual module
     dbgcmdnew("symdownload,downloadsym", cbDebugDownloadSymbol, true); //download symbols
+    dbgcmdnew("symload,loadsym", cbDebugLoadSymbol, true); //load symbols
+    dbgcmdnew("symunload,unloadsym", cbDebugUnloadSymbol, true); //unload symbols
     dbgcmdnew("imageinfo,modimageinfo", cbInstrImageinfo, true); //print module image information
     dbgcmdnew("GetRelocSize,grs", cbInstrGetRelocSize, true); //get relocation table size
     dbgcmdnew("exhandlers", cbInstrExhandlers, true); //enumerate exception handlers
@@ -378,6 +380,7 @@ static void registercommands()
     dbgcmdnew("msgyn", cbScriptMsgyn, false);
     dbgcmdnew("log", cbInstrLog, false); //log command with superawesome hax
     dbgcmdnew("scriptdll,dllscript", cbScriptDll, false); //execute a script DLL
+    dbgcmdnew("scriptcmd", cbScriptCmd, false); // execute a script command TODO: undocumented
 
     //gui
     dbgcmdnew("disasm,dis,d", cbDebugDisasm, true); //doDisasm
