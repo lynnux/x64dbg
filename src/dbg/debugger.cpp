@@ -68,13 +68,13 @@ static EXCEPTION_DEBUG_INFO lastExceptionInfo = { 0 };
 static char szDebuggeeInitializationScript[MAX_PATH] = "";
 static WString gInitExe, gInitCmd, gInitDir, gDllLoader;
 static CookieQuery cookie;
-static bool bDatabaseLoaded = false;
 static duint exceptionDispatchAddr = 0;
 static bool bPausedOnException = false;
+static HANDLE DebugDLLFileMapping = 0;
 char szProgramDir[MAX_PATH] = "";
-char szFileName[MAX_PATH] = "";
+char szDebuggeePath[MAX_PATH] = "";
+char szDllLoaderPath[MAX_PATH] = "";
 char szSymbolCachePath[MAX_PATH] = "";
-char sqlitedb[deflen] = "";
 std::vector<std::pair<duint, duint>> RunToUserCodeBreakpoints;
 PROCESS_INFORMATION* fdProcessInfo = &g_pi;
 HANDLE hActiveThread;
@@ -444,6 +444,49 @@ void updateSEHChainAsync()
     updateSEHChainTask.WakeUp();
 }
 
+static void DebugUpdateTitle(duint disasm_addr, bool analyzeThreadSwitch)
+{
+    char modname[MAX_MODULE_SIZE] = "";
+    char modtext[MAX_MODULE_SIZE * 2] = "";
+    if(!ModNameFromAddr(disasm_addr, modname, true))
+        *modname = 0;
+    else
+        sprintf_s(modtext, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Module: %s - ")), modname);
+    char threadswitch[256] = "";
+    DWORD currentThreadId = ThreadGetId(hActiveThread);
+    if(analyzeThreadSwitch)
+    {
+        static DWORD PrevThreadId = 0;
+        if(PrevThreadId == 0)
+            PrevThreadId = fdProcessInfo->dwThreadId; // Initialize to Main Thread
+        if(currentThreadId != PrevThreadId && PrevThreadId != 0)
+        {
+            char threadName2[MAX_THREAD_NAME_SIZE] = "";
+            if(!ThreadGetName(PrevThreadId, threadName2) || threadName2[0] == 0)
+                sprintf_s(threadName2, "%X", PrevThreadId);
+            sprintf_s(threadswitch, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", " (switched from %s)")), threadName2);
+            PrevThreadId = currentThreadId;
+        }
+    }
+    char title[deflen] = "";
+    char threadName[MAX_THREAD_NAME_SIZE + 1] = "";
+    if(ThreadGetName(currentThreadId, threadName) && *threadName)
+        strcat_s(threadName, " ");
+    char PIDnumber[64], TIDnumber[64];
+    if(settingboolget("Gui", "PidInHex"))
+    {
+        sprintf_s(PIDnumber, "%X", fdProcessInfo->dwProcessId);
+        sprintf_s(TIDnumber, "%X", currentThreadId);
+    }
+    else
+    {
+        sprintf_s(PIDnumber, "%u", fdProcessInfo->dwProcessId);
+        sprintf_s(TIDnumber, "%u", currentThreadId);
+    }
+    sprintf_s(title, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "%s - PID: %s - %sThread: %s%s%s")), szBaseFileName, PIDnumber, modtext, threadName, TIDnumber, threadswitch);
+    GuiUpdateWindowTitle(title);
+}
+
 void DebugUpdateGui(duint disasm_addr, bool stack)
 {
     if(GuiIsUpdateDisabled())
@@ -479,45 +522,7 @@ void DebugUpdateGui(duint disasm_addr, bool stack)
         updateCallStackAsync(csp);
         updateSEHChainAsync();
     }
-    char modname[MAX_MODULE_SIZE] = "";
-    char modtext[MAX_MODULE_SIZE * 2] = "";
-    if(!ModNameFromAddr(disasm_addr, modname, true))
-        *modname = 0;
-    else
-        sprintf_s(modtext, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Module: %s - ")), modname);
-    char threadswitch[256] = "";
-    DWORD currentThreadId = ThreadGetId(hActiveThread);
-    {
-        static DWORD PrevThreadId = 0;
-        if(PrevThreadId == 0)
-            PrevThreadId = fdProcessInfo->dwThreadId; // Initialize to Main Thread
-        if(currentThreadId != PrevThreadId && PrevThreadId != 0)
-        {
-            char threadName2[MAX_THREAD_NAME_SIZE] = "";
-            if(!ThreadGetName(PrevThreadId, threadName2) || threadName2[0] == 0)
-                sprintf_s(threadName2, "%X", PrevThreadId);
-            sprintf_s(threadswitch, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", " (switched from %s)")), threadName2);
-            PrevThreadId = currentThreadId;
-        }
-    }
-    char title[deflen] = "";
-    char threadName[MAX_THREAD_NAME_SIZE + 1] = "";
-    if(ThreadGetName(currentThreadId, threadName) && *threadName)
-        strcat_s(threadName, " ");
-    //sprintf_s(title, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "File: %s - PID: %X - %sThread: %s%X%s")), szBaseFileName, fdProcessInfo->dwProcessId, modtext, threadName, currentThreadId, threadswitch);
-    char PIDnumber[64], TIDnumber[64];
-    if(settingboolget("Gui", "PidInHex"))
-    {
-        sprintf_s(PIDnumber, "%X", fdProcessInfo->dwProcessId);
-        sprintf_s(TIDnumber, "%X", currentThreadId);
-    }
-    else
-    {
-        sprintf_s(PIDnumber, "%u", fdProcessInfo->dwProcessId);
-        sprintf_s(TIDnumber, "%u", currentThreadId);
-    }
-    sprintf_s(title, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "%s - PID: %s - %sThread: %s%s%s")), szBaseFileName, PIDnumber, modtext, threadName, TIDnumber, threadswitch);
-    GuiUpdateWindowTitle(title);
+    DebugUpdateTitle(disasm_addr, true);
     GuiUpdateRegisterView();
     GuiUpdateDisassemblyView();
     GuiUpdateThreadView();
@@ -535,6 +540,12 @@ void DebugUpdateGuiAsync(duint disasm_addr, bool stack)
 {
     static TaskThread_<decltype(&DebugUpdateGui), duint, bool> DebugUpdateGuiTask(&DebugUpdateGui);
     DebugUpdateGuiTask.WakeUp(disasm_addr, stack);
+}
+
+void DebugUpdateTitleAsync(duint disasm_addr, bool analyzeThreadSwitch)
+{
+    static TaskThread_<decltype(&DebugUpdateTitle), duint, bool> DebugUpdateTitleTask(&DebugUpdateTitle);
+    DebugUpdateTitleTask.WakeUp(disasm_addr, analyzeThreadSwitch);
 }
 
 void DebugUpdateGuiSetStateAsync(duint disasm_addr, bool stack, DBGSTATE state)
@@ -1119,7 +1130,7 @@ static bool cbRemoveModuleBreakpoints(const BREAKPOINT* bp)
             dprintf(QT_TRANSLATE_NOOP("DBG", "Could not delete memory breakpoint %p! (RemoveMemoryBPX)\n"), bp->addr);
         break;
     case BPHARDWARE:
-        if(!DeleteHardwareBreakPoint(TITANGETDRX(bp->titantype)))
+        if(TITANDRXVALID(bp->titantype) && !DeleteHardwareBreakPoint(TITANGETDRX(bp->titantype)))
             dprintf(QT_TRANSLATE_NOOP("DBG", "Could not delete hardware breakpoint %p! (DeleteHardwareBreakPoint)\n"), bp->addr);
         break;
     default:
@@ -1357,10 +1368,6 @@ static void cbCreateProcess(CREATE_PROCESS_DEBUG_INFO* CreateProcessInfo)
 
     GuiDumpAt(MemFindBaseAddr(GetContextDataEx(CreateProcessInfo->hThread, UE_CIP), 0) + PAGE_SIZE); //dump somewhere
 
-    // Init program database
-    DbLoad(DbLoadSaveType::DebugData);
-    bDatabaseLoaded = true;
-
     ModLoad((duint)base, 1, DebugFileName);
 
     char modname[256] = "";
@@ -1571,15 +1578,21 @@ static DWORD WINAPI cbInitializationScriptThread(void*)
     Memory<char*> script(MAX_SETTING_SIZE + 1);
     if(BridgeSettingGet("Engine", "InitializeScript", script())) // Global script file
     {
-        if(scriptLoadSync(script()) == 0)
-            scriptRunSync((void*)0);
+        if(scriptLoadSync(script()))
+        {
+            if(scriptRunSync(0, true))
+                scriptunload();
+        }
         else
             dputs(QT_TRANSLATE_NOOP("DBG", "Error: Cannot load global initialization script."));
     }
     if(szDebuggeeInitializationScript[0] != 0)
     {
-        if(scriptLoadSync(szDebuggeeInitializationScript) == 0)
-            scriptRunSync((void*)0);
+        if(scriptLoadSync(szDebuggeeInitializationScript))
+        {
+            if(scriptRunSync(0, true))
+                scriptunload();
+        }
         else
             dputs(QT_TRANSLATE_NOOP("DBG", "Error: Cannot load debuggee initialization script."));
     }
@@ -1660,8 +1673,10 @@ static void cbLoadDll(LOAD_DLL_DEBUG_INFO* LoadDll)
 
     char command[MAX_PATH * 2] = "";
     bool bIsDebuggingThis = false;
-    if(bFileIsDll && !_stricmp(DLLDebugFileName, szFileName) && !bIsAttached) //Set entry breakpoint
+    if(bFileIsDll && !_stricmp(DLLDebugFileName, szDebuggeePath) && !bIsAttached) //Set entry breakpoint
     {
+        CloseHandle(DebugDLLFileMapping);
+        DebugDLLFileMapping = 0;
         bIsDebuggingThis = true;
         pDebuggedBase = (duint)base;
         DbCheckHash(ModContentHashFromAddr(pDebuggedBase)); //Check hash mismatch
@@ -1859,7 +1874,7 @@ static bool dbgdetachDisableAllBreakpoints(const BREAKPOINT* bp)
             DeleteBPX(bp->addr);
         else if(bp->type == BPMEMORY)
             RemoveMemoryBPX(bp->addr, 0);
-        else if(bp->type == BPHARDWARE)
+        else if(bp->type == BPHARDWARE && TITANDRXVALID(bp->titantype))
             DeleteHardwareBreakPoint(TITANGETDRX(bp->titantype));
     }
     return true;
@@ -1901,7 +1916,6 @@ static void cbException(EXCEPTION_DEBUG_INFO* ExceptionData)
             _dbg_animatestop(); // Stop animating
             return;
         }
-        SetContextDataEx(hActiveThread, UE_CIP, (duint)ExceptionData->ExceptionRecord.ExceptionAddress);
     }
     else if(ExceptionData->ExceptionRecord.ExceptionCode == MS_VC_EXCEPTION) //SetThreadName exception
     {
@@ -1971,6 +1985,7 @@ static void cbAttachDebugger()
     if(hEvent) //Signal the AeDebug event
     {
         SetEvent(hEvent);
+        CloseHandle(hEvent);
         hEvent = 0;
     }
     if(tidToResume) //Resume a thread
@@ -2540,20 +2555,58 @@ void dbgstartscriptthread(CBPLUGINSCRIPT cbScript)
     CloseHandle(CreateThread(0, 0, scriptThread, (LPVOID)cbScript, 0, 0));
 }
 
+static void* InitDLLDebugW(const wchar_t* szFileName, const wchar_t* szCommandLine, const wchar_t* szCurrentFolder)
+{
+    WString loaderFilename = StringUtils::sprintf(L"\\DLLLoader" ArchValue(L"32", L"64") L"_%04X.exe", GetTickCount() & 0xFFFF);
+    WString debuggeeLoaderPath = szFileName;
+    {
+        auto backslashIdx = debuggeeLoaderPath.rfind('\\');
+        if(backslashIdx != WString::npos)
+            debuggeeLoaderPath.resize(backslashIdx);
+    }
+    debuggeeLoaderPath += loaderFilename;
+    WString loaderPath = StringUtils::Utf8ToUtf16(szDllLoaderPath);
+    if(!CopyFileW(loaderPath.c_str(), debuggeeLoaderPath.c_str(), FALSE))
+    {
+        debuggeeLoaderPath = StringUtils::Utf8ToUtf16(szProgramDir);
+        debuggeeLoaderPath += loaderFilename;
+        if(!CopyFileW(loaderPath.c_str(), debuggeeLoaderPath.c_str(), FALSE))
+        {
+            dprintf(QT_TRANSLATE_NOOP("DBG", "Error debugging DLL (failed to copy loader)\n"));
+            return nullptr;
+        }
+    }
+
+    PPROCESS_INFORMATION ReturnValue = (PPROCESS_INFORMATION)InitDebugW(debuggeeLoaderPath.c_str(), szCommandLine, szCurrentFolder);
+    WString mappingName = StringUtils::sprintf(L"Local\\szLibraryName%X", ReturnValue->dwProcessId);
+    const auto mappingSize = 512;
+    DebugDLLFileMapping = CreateFileMappingW(INVALID_HANDLE_VALUE, 0, PAGE_READWRITE, 0, mappingSize * sizeof(wchar_t), mappingName.c_str());
+    if(DebugDLLFileMapping)
+    {
+        wchar_t* szLibraryPathMapping = (wchar_t*)MapViewOfFile(DebugDLLFileMapping, FILE_MAP_ALL_ACCESS, 0, 0, mappingSize * sizeof(wchar_t));
+        if(szLibraryPathMapping)
+        {
+            wcscpy_s(szLibraryPathMapping, mappingSize, szFileName);
+            UnmapViewOfFile(szLibraryPathMapping);
+        }
+    }
+
+    return ReturnValue;
+}
+
 static void debugLoopFunction(void* lpParameter, bool attach)
 {
     //initialize variables
     bIsAttached = attach;
     dbgsetskipexceptions(false);
     bFreezeStack = false;
-    bDatabaseLoaded = false;
 
     //prepare attach/createprocess
     DWORD pid;
     INIT_STRUCT* init;
     if(attach)
     {
-        gInitExe = StringUtils::Utf8ToUtf16(szFileName);
+        gInitExe = StringUtils::Utf8ToUtf16(szDebuggeePath);
         pid = DWORD(lpParameter);
         static PROCESS_INFORMATION pi_attached;
         memset(&pi_attached, 0, sizeof(pi_attached));
@@ -2563,14 +2616,19 @@ static void debugLoopFunction(void* lpParameter, bool attach)
     {
         init = (INIT_STRUCT*)lpParameter;
         gInitExe = StringUtils::Utf8ToUtf16(init->exe);
-        strcpy_s(szFileName, init->exe);
+        strcpy_s(szDebuggeePath, init->exe);
     }
 
     pDebuggedEntry = GetPE32DataW(gInitExe.c_str(), 0, UE_OEP);
     bEntryIsInMzHeader = pDebuggedEntry == 0 || pDebuggedEntry == 1;
 
-    bFileIsDll = IsFileDLLW(StringUtils::Utf8ToUtf16(szFileName).c_str(), 0);
-    DbSetPath(nullptr, szFileName);
+    bFileIsDll = IsFileDLLW(StringUtils::Utf8ToUtf16(szDebuggeePath).c_str(), 0);
+    if(bFileIsDll && !FileExists(szDllLoaderPath))
+    {
+        dprintf(QT_TRANSLATE_NOOP("DBG", "Error debugging DLL (loaddll.exe not found)\n"));
+        return;
+    }
+    DbSetPath(nullptr, szDebuggeePath);
 
     if(!attach)
     {
@@ -2590,7 +2648,7 @@ static void debugLoopFunction(void* lpParameter, bool attach)
 
         //start the process
         if(bFileIsDll)
-            fdProcessInfo = (PROCESS_INFORMATION*)InitDLLDebugW(gInitExe.c_str(), false, gInitCmd.c_str(), gInitDir.c_str(), 0);
+            fdProcessInfo = (PROCESS_INFORMATION*)InitDLLDebugW(gInitExe.c_str(), gInitCmd.c_str(), gInitDir.c_str());
         else
             fdProcessInfo = (PROCESS_INFORMATION*)InitDebugW(gInitExe.c_str(), gInitCmd.c_str(), gInitDir.c_str());
         if(!fdProcessInfo)
@@ -2668,10 +2726,10 @@ static void debugLoopFunction(void* lpParameter, bool attach)
     //inform GUI we started without problems
     GuiSetDebugState(initialized);
     GuiFocusView(GUI_DISASSEMBLY);
-    GuiAddRecentFile(szFileName);
+    GuiAddRecentFile(szDebuggeePath);
 
     //set GUI title
-    strcpy_s(szBaseFileName, szFileName);
+    strcpy_s(szBaseFileName, szDebuggeePath);
     int len = (int)strlen(szBaseFileName);
     while(szBaseFileName[len] != '\\' && len)
         len--;
@@ -2681,7 +2739,7 @@ static void debugLoopFunction(void* lpParameter, bool attach)
 
     //call plugin callback
     PLUG_CB_INITDEBUG initInfo;
-    initInfo.szFileName = szFileName;
+    initInfo.szFileName = szDebuggeePath;
     plugincbcall(CB_INITDEBUG, &initInfo);
 
     //call plugin callback (attach)
@@ -2691,6 +2749,9 @@ static void debugLoopFunction(void* lpParameter, bool attach)
         attachInfo.dwProcessId = (DWORD)pid;
         plugincbcall(CB_ATTACH, &attachInfo);
     }
+
+    // Init program database
+    DbLoad(DbLoadSaveType::DebugData);
 
     //run debug loop (returns when process debugging is stopped)
     if(attach)
@@ -2710,8 +2771,8 @@ static void debugLoopFunction(void* lpParameter, bool attach)
         DebugLoop();
     }
 
-    if(bDatabaseLoaded) //fixes data loss when attach failed (https://github.com/x64dbg/x64dbg/issues/1899)
-        DbClose();
+    //fixes data loss when attach failed (https://github.com/x64dbg/x64dbg/issues/1899)
+    DbClose();
 
     //call plugin callback
     PLUG_CB_STOPDEBUG stopInfo;
@@ -2743,6 +2804,12 @@ static void debugLoopFunction(void* lpParameter, bool attach)
     {
         CloseHandle(hProcessToken);
         hProcessToken = 0;
+    }
+
+    if(DebugDLLFileMapping)
+    {
+        CloseHandle(DebugDLLFileMapping);
+        DebugDLLFileMapping = 0;
     }
 
     pDebuggedEntry = 0;

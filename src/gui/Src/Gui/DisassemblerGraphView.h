@@ -208,6 +208,7 @@ public:
 
     DisassemblerGraphView(QWidget* parent = nullptr);
     ~DisassemblerGraphView();
+    void resetGraph();
     void initFont();
     void adjustSize(int viewportWidth, int viewportHeight, QPoint mousePosition = QPoint(0, 0), bool fitToWindow = false);
     void resizeEvent(QResizeEvent* event);
@@ -285,6 +286,7 @@ public slots:
     void fitToWindowSlot();
     void zoomToCursorSlot();
     void getCurrentGraphSlot(BridgeCFGraphList* graphList);
+    void dbgStateChangedSlot(DBGSTATE state);
 
 private:
     bool graphZoomMode;
@@ -375,7 +377,7 @@ private:
     GotoDialog* mGoto;
     XrefBrowseDialog* mXrefDlg;
 
-    void addReferenceAction(QMenu* menu, duint addr);
+    void addReferenceAction(QMenu* menu, duint addr, const QString & description);
 };
 
 #endif // DISASSEMBLERGRAPHVIEW_H

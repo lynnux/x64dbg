@@ -19,43 +19,10 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="crashdump.cpp" />
-    <ClCompile Include="x64dbg_exe.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="crashdump.h" />
-    <ClInclude Include="icon.h" />
-    <ClInclude Include="LoadResourceString.h" />
-    <ClInclude Include="resource.h" />
-    <ClInclude Include="strings.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <ResourceCompile Include="icon32.rc">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-    </ResourceCompile>
-    <ResourceCompile Include="icon64.rc">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
-    </ResourceCompile>
-    <ResourceCompile Include="resource.rc" />
-    <ResourceCompile Include="Strings.rc" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="..\bug.ico" />
-    <None Include="manifest.xml" />
-  </ItemGroup>
-  <ItemGroup>
-    <Image Include="..\bug32.ico" />
-    <Image Include="..\bug64.ico" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\bridge\x64dbg_bridge.vcxproj">
-      <Project>{944d9923-cb1a-6f6c-bcbc-9e00a71954c1}</Project>
-    </ProjectReference>
+    <ClCompile Include="loaddll.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{3A22175E-6B72-FDCC-1603-C4A2163C7900}</ProjectGuid>
+    <ProjectGuid>{21AD9735-967B-41F7-8329-DB88D03743ED}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -98,43 +65,38 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(ProjectDir)..\..\bin\x32\</OutDir>
-    <IntDir>$(Platform)\$(Configuration)\</IntDir>
-    <TargetName>x32dbg</TargetName>
     <GenerateManifest>false</GenerateManifest>
+    <IntDir>$(Platform)\$(Configuration)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(ProjectDir)..\..\bin\x32d\</OutDir>
-    <IntDir>$(Platform)\$(Configuration)\</IntDir>
-    <TargetName>x32dbg</TargetName>
     <GenerateManifest>false</GenerateManifest>
+    <IntDir>$(Platform)\$(Configuration)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(ProjectDir)..\..\bin\x64\</OutDir>
-    <TargetName>x64dbg</TargetName>
     <GenerateManifest>false</GenerateManifest>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(ProjectDir)..\..\bin\x64d\</OutDir>
-    <TargetName>x64dbg</TargetName>
     <GenerateManifest>false</GenerateManifest>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
     <Link>
       <TargetMachine>MachineX86</TargetMachine>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <SubSystem>Windows</SubSystem>
+      <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <ProgramDatabaseFile>$(TargetDir)$(TargetName)_exe.pdb</ProgramDatabaseFile>
       <AdditionalManifestDependencies>
       </AdditionalManifestDependencies>
       <LargeAddressAware>true</LargeAddressAware>
@@ -150,10 +112,9 @@
     <Link>
       <TargetMachine>MachineX86</TargetMachine>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <SubSystem>Windows</SubSystem>
+      <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <ProgramDatabaseFile>$(TargetDir)$(TargetName)_exe.pdb</ProgramDatabaseFile>
       <AdditionalManifestDependencies>
       </AdditionalManifestDependencies>
     </Link>
@@ -161,16 +122,15 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <SubSystem>Windows</SubSystem>
+      <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <ProgramDatabaseFile>$(TargetDir)$(TargetName)_exe.pdb</ProgramDatabaseFile>
       <AdditionalManifestDependencies>
       </AdditionalManifestDependencies>
     </Link>
@@ -184,10 +144,9 @@
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <SubSystem>Windows</SubSystem>
+      <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <ProgramDatabaseFile>$(TargetDir)$(TargetName)_exe.pdb</ProgramDatabaseFile>
       <AdditionalManifestDependencies>
       </AdditionalManifestDependencies>
     </Link>
